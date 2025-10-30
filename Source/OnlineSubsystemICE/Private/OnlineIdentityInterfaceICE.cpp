@@ -2,6 +2,7 @@
 
 #include "OnlineIdentityInterfaceICE.h"
 #include "OnlineSubsystemICE.h"
+#include "OnlineError.h"
 #include "Misc/Guid.h"
 
 // FUniqueNetIdICE implementation
