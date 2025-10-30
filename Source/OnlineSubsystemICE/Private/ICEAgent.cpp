@@ -105,7 +105,8 @@ void FICEAgent::GatherHostCandidates()
 	}
 
 	// Get local address
-	TSharedPtr<FInternetAddr> LocalAddr = SocketSubsystem->GetLocalHostAddr(*GLog, false);
+	bool bCanBindAll;
+	TSharedPtr<FInternetAddr> LocalAddr = SocketSubsystem->GetLocalHostAddr(*GLog, bCanBindAll);
 	if (!LocalAddr.IsValid() || !LocalAddr->IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to get local address"));
