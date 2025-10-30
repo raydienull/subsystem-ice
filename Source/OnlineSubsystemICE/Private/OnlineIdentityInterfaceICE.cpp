@@ -219,7 +219,7 @@ void FOnlineIdentityICE::RevokeAuthToken(const FUniqueNetId& UserId, const FOnRe
 	Delegate.ExecuteIfBound(UserId, FOnlineError(false));
 }
 
-void FOnlineIdentityICE::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate)
+void FOnlineIdentityICE::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI)
 {
 	// For a basic implementation, grant all privileges
 	Delegate.ExecuteIfBound(UserId, Privilege, static_cast<uint32>(IOnlineIdentity::EPrivilegeResults::NoFailures));
