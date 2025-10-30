@@ -57,6 +57,26 @@ public:
 	// FTickerObjectBase
 	virtual bool Tick(float DeltaTime) override;
 
+	/**
+	 * Get STUN server address
+	 */
+	const FString& GetSTUNServerAddress() const { return STUNServerAddress; }
+
+	/**
+	 * Get TURN server address
+	 */
+	const FString& GetTURNServerAddress() const { return TURNServerAddress; }
+
+	/**
+	 * Get TURN username
+	 */
+	const FString& GetTURNUsername() const { return TURNUsername; }
+
+	/**
+	 * Get TURN credential
+	 */
+	const FString& GetTURNCredential() const { return TURNCredential; }
+
 PACKAGE_SCOPE:
 	/** Only the factory makes instances */
 	FOnlineSubsystemICE() = delete;

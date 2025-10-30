@@ -10,10 +10,11 @@ OnlineSubsystemICE provides an alternative to proprietary online subsystems like
 
 - ✅ **ICE Protocol Support**: RFC 8445-compliant Interactive Connectivity Establishment
 - ✅ **STUN Support**: Automatic public IP discovery through STUN servers
-- 🚧 **TURN Support**: Relay fallback for restrictive NAT (basic implementation)
+- ✅ **TURN Support**: Full TURN relay implementation (RFC 5766) for restrictive NAT
 - ✅ **OnlineSubsystem Integration**: Compatible with Unreal Engine's IOnlineSession and IOnlineIdentity interfaces
 - ✅ **Multi-platform**: Windows, Linux, and Mac support
 - ✅ **Configurable**: Easy-to-configure STUN/TURN servers
+- ✅ **Testing Console Commands**: Manual signaling commands for local testing without signaling server
 
 ## Installation
 
@@ -140,7 +141,8 @@ void OnFindSessionsComplete(bool bWasSuccessful)
    - Relayed candidates (via TURN, if configured)
 
 2. **Candidate Exchange**: 
-   - Candidates are exchanged through a signaling mechanism (to be implemented)
+   - For testing: Use console commands for manual signaling (see TESTING_GUIDE.md)
+   - For production: Implement signaling server or use manual commands
 
 3. **Connectivity Checks**:
    - STUN binding requests between candidate pairs
@@ -148,6 +150,21 @@ void OnFindSessionsComplete(bool bWasSuccessful)
 
 4. **Connection Establishment**:
    - Once a candidate pair succeeds, data can be transmitted
+
+### Testing Without Signaling Server
+
+OnlineSubsystemICE includes console commands for manual testing:
+
+```
+ICE SETREMOTEPEER <ip> <port>     - Set remote peer address
+ICE ADDCANDIDATE <candidate>      - Add remote ICE candidate
+ICE LISTCANDIDATES                - List local ICE candidates
+ICE STARTCHECKS                   - Start connectivity checks
+ICE STATUS                        - Show connection status
+ICE HELP                          - Show all commands
+```
+
+See [TESTING_GUIDE.md](TESTING_GUIDE.md) for complete testing workflows.
 
 ## STUN Servers
 

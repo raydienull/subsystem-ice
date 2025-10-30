@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release of OnlineSubsystemICE
 - ICE protocol implementation (RFC 8445)
 - STUN support for NAT traversal
-- Basic TURN support framework
+- Full TURN relay implementation (RFC 5766)
+- Console commands for manual signaling and testing
 - OnlineSession interface implementation
   - CreateSession, JoinSession, DestroySession
   - Session state management
@@ -34,8 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logging and debugging support
 
 ### Known Limitations
-- Signaling mechanism not implemented (requires manual candidate exchange)
-- TURN relay implementation is basic
+- Signaling mechanism requires manual console commands or external implementation
 - No DTLS encryption yet
 - Matchmaking service integration pending
 
@@ -51,3 +51,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv6 full support
 - Connection quality monitoring
 - Automatic reconnection
+- Web-based signaling server implementation

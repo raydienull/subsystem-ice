@@ -3,10 +3,39 @@
 #include "OnlineSessionInterfaceICE.h"
 #include "OnlineSubsystemICE.h"
 #include "OnlineSubsystemUtils.h"
+#include "ICEAgent.h"
 
 FOnlineSessionICE::FOnlineSessionICE(FOnlineSubsystemICE* InSubsystem)
 	: Subsystem(InSubsystem)
+	, RemotePeerPort(0)
 {
+	// Create ICE agent with config from subsystem
+	FICEAgentConfig Config;
+	
+	if (Subsystem)
+	{
+		// Add STUN server
+		if (!Subsystem->GetSTUNServerAddress().IsEmpty())
+		{
+			Config.STUNServers.Add(Subsystem->GetSTUNServerAddress());
+		}
+		
+		// Add TURN server
+		if (!Subsystem->GetTURNServerAddress().IsEmpty())
+		{
+			Config.TURNServers.Add(Subsystem->GetTURNServerAddress());
+			Config.TURNUsername = Subsystem->GetTURNUsername();
+			Config.TURNCredential = Subsystem->GetTURNCredential();
+		}
+	}
+	
+	// Default STUN server if none configured
+	if (Config.STUNServers.Num() == 0)
+	{
+		Config.STUNServers.Add(TEXT("stun.l.google.com:19302"));
+	}
+	
+	ICEAgent = MakeShared<FICEAgent>(Config);
 }
 
 FOnlineSessionICE::~FOnlineSessionICE()
@@ -418,4 +447,113 @@ void FOnlineSessionICE::Tick(float DeltaTime)
 {
 	// Periodic processing for sessions
 	// In a real implementation, this would handle ICE keepalives, timeouts, etc.
+	if (ICEAgent.IsValid())
+	{
+		ICEAgent->Tick(DeltaTime);
+	}
+}
+
+void FOnlineSessionICE::SetRemotePeer(const FString& IPAddress, int32 Port)
+{
+	UE_LOG(LogOnlineICE, Log, TEXT("Setting remote peer: %s:%d"), *IPAddress, Port);
+	RemotePeerIP = IPAddress;
+	RemotePeerPort = Port;
+
+	// Create a remote candidate from the IP/Port
+	if (ICEAgent.IsValid())
+	{
+		FICECandidate RemoteCandidate;
+		RemoteCandidate.Foundation = TEXT("remote");
+		RemoteCandidate.ComponentId = 1;
+		RemoteCandidate.Transport = TEXT("UDP");
+		RemoteCandidate.Priority = 1000;
+		RemoteCandidate.Address = IPAddress;
+		RemoteCandidate.Port = Port;
+		RemoteCandidate.Type = EICECandidateType::Host;
+
+		ICEAgent->AddRemoteCandidate(RemoteCandidate);
+		UE_LOG(LogOnlineICE, Log, TEXT("Added remote candidate for peer"));
+	}
+}
+
+void FOnlineSessionICE::AddRemoteICECandidate(const FString& CandidateString)
+{
+	UE_LOG(LogOnlineICE, Log, TEXT("Adding remote ICE candidate: %s"), *CandidateString);
+
+	if (ICEAgent.IsValid())
+	{
+		FICECandidate Candidate = FICECandidate::FromString(CandidateString);
+		if (!Candidate.Address.IsEmpty())
+		{
+			ICEAgent->AddRemoteCandidate(Candidate);
+			UE_LOG(LogOnlineICE, Log, TEXT("Remote candidate added successfully"));
+		}
+		else
+		{
+			UE_LOG(LogOnlineICE, Warning, TEXT("Failed to parse candidate string"));
+		}
+	}
+}
+
+TArray<FString> FOnlineSessionICE::GetLocalICECandidates()
+{
+	TArray<FString> CandidateStrings;
+
+	if (ICEAgent.IsValid())
+	{
+		// Gather candidates if not already done
+		ICEAgent->GatherCandidates();
+
+		TArray<FICECandidate> Candidates = ICEAgent->GetLocalCandidates();
+		for (const FICECandidate& Candidate : Candidates)
+		{
+			CandidateStrings.Add(Candidate.ToString());
+		}
+	}
+
+	return CandidateStrings;
+}
+
+bool FOnlineSessionICE::StartICEConnectivityChecks()
+{
+	UE_LOG(LogOnlineICE, Log, TEXT("Starting ICE connectivity checks"));
+
+	if (ICEAgent.IsValid())
+	{
+		return ICEAgent->StartConnectivityChecks();
+	}
+
+	return false;
+}
+
+void FOnlineSessionICE::DumpICEStatus(FOutputDevice& Ar)
+{
+	Ar.Logf(TEXT("=== ICE Connection Status ==="));
+
+	if (ICEAgent.IsValid())
+	{
+		Ar.Logf(TEXT("Connected: %s"), ICEAgent->IsConnected() ? TEXT("Yes") : TEXT("No"));
+
+		TArray<FICECandidate> LocalCandidates = ICEAgent->GetLocalCandidates();
+		Ar.Logf(TEXT("Local Candidates: %d"), LocalCandidates.Num());
+		for (const FICECandidate& Candidate : LocalCandidates)
+		{
+			Ar.Logf(TEXT("  %s"), *Candidate.ToString());
+		}
+
+		if (!RemotePeerIP.IsEmpty())
+		{
+			Ar.Logf(TEXT("Remote Peer: %s:%d"), *RemotePeerIP, RemotePeerPort);
+		}
+		else
+		{
+			Ar.Logf(TEXT("Remote Peer: Not set"));
+		}
+	}
+	else
+	{
+		Ar.Logf(TEXT("ICE Agent not initialized"));
+	}
+
+	Ar.Logf(TEXT("============================="));
 }

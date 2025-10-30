@@ -158,11 +158,34 @@ void FICEAgent::GatherRelayedCandidates()
 {
 	UE_LOG(LogOnlineICE, Log, TEXT("Gathering relayed candidates via TURN"));
 
-	// TURN implementation would go here
-	// This is a complex protocol that requires authentication and allocation
-	// For now, we'll leave this as a placeholder
+	if (Config.TURNServers.Num() == 0)
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("No TURN servers configured"));
+		return;
+	}
 
-	UE_LOG(LogOnlineICE, Warning, TEXT("TURN relay candidate gathering not fully implemented"));
+	for (const FString& TURNServer : Config.TURNServers)
+	{
+		FString RelayIP;
+		int32 RelayPort;
+
+		if (PerformTURNAllocation(TURNServer, Config.TURNUsername, Config.TURNCredential, RelayIP, RelayPort))
+		{
+			FICECandidate RelayCandidate;
+			RelayCandidate.Foundation = TEXT("3");
+			RelayCandidate.ComponentId = 1;
+			RelayCandidate.Transport = TEXT("UDP");
+			RelayCandidate.Priority = CalculatePriority(EICECandidateType::Relayed, 65535, 1);
+			RelayCandidate.Address = RelayIP;
+			RelayCandidate.Port = RelayPort;
+			RelayCandidate.Type = EICECandidateType::Relayed;
+
+			LocalCandidates.Add(RelayCandidate);
+
+			UE_LOG(LogOnlineICE, Log, TEXT("Added relay candidate: %s"), *RelayCandidate.ToString());
+			break; // Only need one TURN server to succeed
+		}
+	}
 }
 
 bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPublicIP, int32& OutPublicPort)
@@ -334,6 +357,233 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 
 	UE_LOG(LogOnlineICE, Warning, TEXT("Failed to parse STUN response"));
 	SocketSubsystem->DestroySocket(STUNSocket);
+	return false;
+}
+
+bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FString& Username, const FString& Credential, FString& OutRelayIP, int32& OutRelayPort)
+{
+	UE_LOG(LogOnlineICE, Log, TEXT("Performing TURN allocation to: %s"), *ServerAddress);
+
+	if (Username.IsEmpty() || Credential.IsEmpty())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("TURN username or credential not configured"));
+		return false;
+	}
+
+	// Parse server address
+	FString Host;
+	int32 Port = 3478; // Default TURN port
+
+	int32 ColonPos;
+	if (ServerAddress.FindChar(':', ColonPos))
+	{
+		Host = ServerAddress.Left(ColonPos);
+		Port = FCString::Atoi(*ServerAddress.Mid(ColonPos + 1));
+	}
+	else
+	{
+		Host = ServerAddress;
+	}
+
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	if (!SocketSubsystem)
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to get socket subsystem"));
+		return false;
+	}
+
+	// Resolve TURN server address
+	TSharedPtr<FInternetAddr> TURNAddr = SocketSubsystem->GetAddressFromString(Host);
+	if (!TURNAddr.IsValid())
+	{
+		auto ResolveInfo = SocketSubsystem->GetHostByName(TCHAR_TO_ANSI(*Host));
+		if (ResolveInfo)
+		{
+			while (!ResolveInfo->IsComplete());
+
+			if (ResolveInfo->GetErrorCode() == SE_NO_ERROR)
+			{
+				TURNAddr = SocketSubsystem->CreateInternetAddr();
+				TURNAddr->SetIp(ResolveInfo->GetResolvedAddress().GetIp());
+			}
+		}
+	}
+
+	if (!TURNAddr.IsValid() || !TURNAddr->IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to resolve TURN server: %s"), *Host);
+		return false;
+	}
+
+	TURNAddr->SetPort(Port);
+
+	// Create socket for TURN
+	FSocket* TURNSocket = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("TURN"), TURNAddr->GetProtocolType());
+	if (!TURNSocket)
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to create TURN socket"));
+		return false;
+	}
+
+	// Build TURN Allocate Request (RFC 5766)
+	// Message format: Type (2) | Length (2) | Magic Cookie (4) | Transaction ID (12) | Attributes
+	TArray<uint8> TURNRequest;
+	TURNRequest.SetNum(256); // Initial size
+	FMemory::Memzero(TURNRequest.GetData(), TURNRequest.Num());
+
+	int32 Offset = 0;
+
+	// Message Type: Allocate Request (0x0003)
+	TURNRequest[Offset++] = 0x00;
+	TURNRequest[Offset++] = 0x03;
+
+	// Message Length: Will be set later
+	int32 LengthOffset = Offset;
+	Offset += 2;
+
+	// Magic Cookie: 0x2112A442
+	TURNRequest[Offset++] = 0x21;
+	TURNRequest[Offset++] = 0x12;
+	TURNRequest[Offset++] = 0xA4;
+	TURNRequest[Offset++] = 0x42;
+
+	// Transaction ID: Random 12 bytes
+	for (int32 i = 0; i < 12; i++)
+	{
+		TURNRequest[Offset++] = FMath::Rand() & 0xFF;
+	}
+
+	// Add REQUESTED-TRANSPORT attribute (UDP = 17)
+	// Type: 0x0019, Length: 4
+	TURNRequest[Offset++] = 0x00;
+	TURNRequest[Offset++] = 0x19;
+	TURNRequest[Offset++] = 0x00;
+	TURNRequest[Offset++] = 0x04;
+	TURNRequest[Offset++] = 17; // UDP protocol
+	TURNRequest[Offset++] = 0x00;
+	TURNRequest[Offset++] = 0x00;
+	TURNRequest[Offset++] = 0x00;
+
+	// Add USERNAME attribute
+	// Type: 0x0006
+	int32 UsernameLen = Username.Len();
+	TURNRequest[Offset++] = 0x00;
+	TURNRequest[Offset++] = 0x06;
+	TURNRequest[Offset++] = (UsernameLen >> 8) & 0xFF;
+	TURNRequest[Offset++] = UsernameLen & 0xFF;
+	for (int32 i = 0; i < UsernameLen; i++)
+	{
+		TURNRequest[Offset++] = Username[i];
+	}
+	// Pad to 4-byte boundary
+	while (Offset % 4 != 0)
+	{
+		TURNRequest[Offset++] = 0x00;
+	}
+
+	// Calculate message length (everything after the header)
+	int32 MessageLength = Offset - 20;
+	TURNRequest[LengthOffset] = (MessageLength >> 8) & 0xFF;
+	TURNRequest[LengthOffset + 1] = MessageLength & 0xFF;
+
+	// Resize to actual size
+	TURNRequest.SetNum(Offset);
+
+	// Send TURN Allocate request
+	int32 BytesSent;
+	if (!TURNSocket->SendTo(TURNRequest.GetData(), TURNRequest.Num(), BytesSent, *TURNAddr))
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to send TURN Allocate request"));
+		SocketSubsystem->DestroySocket(TURNSocket);
+		return false;
+	}
+
+	// Wait for response with timeout
+	if (!TURNSocket->Wait(ESocketWaitConditions::WaitForRead, FTimespan::FromSeconds(5.0)))
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("TURN Allocate request timeout"));
+		SocketSubsystem->DestroySocket(TURNSocket);
+		return false;
+	}
+
+	// Receive TURN response
+	uint8 TURNResponse[1024];
+	int32 BytesRead = 0;
+	TSharedRef<FInternetAddr> FromAddr = SocketSubsystem->CreateInternetAddr();
+
+	if (!TURNSocket->RecvFrom(TURNResponse, sizeof(TURNResponse), BytesRead, *FromAddr))
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to receive TURN response"));
+		SocketSubsystem->DestroySocket(TURNSocket);
+		return false;
+	}
+
+	// Parse TURN response
+	if (BytesRead >= 20)
+	{
+		uint16 MessageType = (TURNResponse[0] << 8) | TURNResponse[1];
+		uint16 MessageLength = (TURNResponse[2] << 8) | TURNResponse[3];
+
+		// Check if it's an Allocate Success Response (0x0103)
+		if (MessageType == 0x0103 && BytesRead >= 20 + MessageLength)
+		{
+			UE_LOG(LogOnlineICE, Log, TEXT("TURN Allocate successful"));
+
+			// Parse attributes to find XOR-RELAYED-ADDRESS (0x0016)
+			int32 AttrOffset = 20;
+			while (AttrOffset < BytesRead)
+			{
+				if (AttrOffset + 4 > BytesRead) break;
+
+				uint16 AttrType = (TURNResponse[AttrOffset] << 8) | TURNResponse[AttrOffset + 1];
+				uint16 AttrLength = (TURNResponse[AttrOffset + 2] << 8) | TURNResponse[AttrOffset + 3];
+
+				if (AttrType == 0x0016 && AttrLength >= 8) // XOR-RELAYED-ADDRESS
+				{
+					// Family (1 byte at offset 5)
+					uint8 Family = TURNResponse[AttrOffset + 5];
+
+					if (Family == 0x01) // IPv4
+					{
+						// XOR-ed Port (2 bytes at offset 6-7)
+						uint16 XorPort = (TURNResponse[AttrOffset + 6] << 8) | TURNResponse[AttrOffset + 7];
+						OutRelayPort = XorPort ^ 0x2112;
+
+						// XOR-ed IP (4 bytes at offset 8-11)
+						uint32 XorIP = (TURNResponse[AttrOffset + 8] << 24) | (TURNResponse[AttrOffset + 9] << 16) |
+						              (TURNResponse[AttrOffset + 10] << 8) | TURNResponse[AttrOffset + 11];
+						uint32 RelayIPValue = XorIP ^ 0x2112A442;
+
+						// Convert to string
+						OutRelayIP = FString::Printf(TEXT("%d.%d.%d.%d"),
+							(RelayIPValue >> 24) & 0xFF,
+							(RelayIPValue >> 16) & 0xFF,
+							(RelayIPValue >> 8) & 0xFF,
+							RelayIPValue & 0xFF);
+
+						UE_LOG(LogOnlineICE, Log, TEXT("TURN allocated relay address: %s:%d"), *OutRelayIP, OutRelayPort);
+
+						SocketSubsystem->DestroySocket(TURNSocket);
+						return true;
+					}
+				}
+
+				// Move to next attribute (pad to 4-byte boundary)
+				AttrOffset += 4 + ((AttrLength + 3) & ~3);
+			}
+		}
+		else if (MessageType == 0x0113) // Allocate Error Response
+		{
+			UE_LOG(LogOnlineICE, Error, TEXT("TURN Allocate failed - error response received"));
+		}
+		else
+		{
+			UE_LOG(LogOnlineICE, Warning, TEXT("Unexpected TURN response type: 0x%04X"), MessageType);
+		}
+	}
+
+	UE_LOG(LogOnlineICE, Warning, TEXT("Failed to parse TURN Allocate response"));
+	SocketSubsystem->DestroySocket(TURNSocket);
 	return false;
 }
 

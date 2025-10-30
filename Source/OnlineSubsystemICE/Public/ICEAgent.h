@@ -148,6 +148,9 @@ private:
 	/** Perform STUN binding request */
 	bool PerformSTUNRequest(const FString& ServerAddress, FString& OutPublicIP, int32& OutPublicPort);
 
+	/** Perform TURN allocation request */
+	bool PerformTURNAllocation(const FString& ServerAddress, const FString& Username, const FString& Credential, FString& OutRelayIP, int32& OutRelayPort);
+
 	/** Calculate candidate priority */
 	int32 CalculatePriority(EICECandidateType Type, int32 LocalPreference, int32 ComponentId);
 };

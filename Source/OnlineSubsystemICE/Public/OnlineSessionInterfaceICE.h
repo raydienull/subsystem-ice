@@ -65,6 +65,31 @@ public:
 	 */
 	void Tick(float DeltaTime);
 
+	/**
+	 * Set remote peer address manually (for testing)
+	 */
+	void SetRemotePeer(const FString& IPAddress, int32 Port);
+
+	/**
+	 * Add remote ICE candidate manually (for testing)
+	 */
+	void AddRemoteICECandidate(const FString& CandidateString);
+
+	/**
+	 * Get local ICE candidates
+	 */
+	TArray<FString> GetLocalICECandidates();
+
+	/**
+	 * Start ICE connectivity checks
+	 */
+	bool StartICEConnectivityChecks();
+
+	/**
+	 * Dump ICE connection status
+	 */
+	void DumpICEStatus(FOutputDevice& Ar);
+
 private:
 	/** Reference to the main subsystem */
 	FOnlineSubsystemICE* Subsystem;
@@ -74,6 +99,13 @@ private:
 
 	/** Current search object */
 	TSharedPtr<FOnlineSessionSearch> CurrentSessionSearch;
+
+	/** ICE agent for P2P connectivity */
+	TSharedPtr<class FICEAgent> ICEAgent;
+
+	/** Remote peer address for manual signaling */
+	FString RemotePeerIP;
+	int32 RemotePeerPort;
 };
 
 typedef TSharedPtr<FOnlineSessionICE, ESPMode::ThreadSafe> FOnlineSessionICEPtr;
