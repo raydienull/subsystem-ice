@@ -635,8 +635,12 @@ bool FICEAgent::StartConnectivityChecks()
 		return false;
 	}
 
-	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->CreateInternetAddr();
-	RemoteAddr->SetIp(*SelectedRemoteCandidate.Address);
+	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->GetAddressFromString(SelectedRemoteCandidate.Address);
+	if (!RemoteAddr.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to parse remote address: %s"), *SelectedRemoteCandidate.Address);
+		return false;
+	}
 	RemoteAddr->SetPort(SelectedRemoteCandidate.Port);
 
 	Socket = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("ICE"), RemoteAddr->GetProtocolType());
@@ -670,8 +674,11 @@ bool FICEAgent::SendData(const uint8* Data, int32 Size)
 		return false;
 	}
 
-	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->CreateInternetAddr();
-	RemoteAddr->SetIp(*SelectedRemoteCandidate.Address);
+	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->GetAddressFromString(SelectedRemoteCandidate.Address);
+	if (!RemoteAddr.IsValid())
+	{
+		return false;
+	}
 	RemoteAddr->SetPort(SelectedRemoteCandidate.Port);
 
 	int32 BytesSent;

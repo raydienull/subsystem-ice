@@ -27,7 +27,7 @@ public:
 
 	friend uint32 GetTypeHash(const FUniqueNetIdICE& A)
 	{
-		return GetTypeHash(A.UniqueNetIdStr);
+		return ::GetTypeHash(A.UniqueNetIdStr);
 	}
 
 private:
