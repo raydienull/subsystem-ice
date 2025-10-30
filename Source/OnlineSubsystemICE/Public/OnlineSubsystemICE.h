@@ -11,6 +11,9 @@ class FOnlineSessionICE;
 class FOnlineIdentityICE;
 class FSocketSubsystemICE;
 
+typedef TSharedPtr<FOnlineIdentityICE, ESPMode::ThreadSafe> FOnlineIdentityICEPtr;
+typedef TSharedPtr<FOnlineSessionICE, ESPMode::ThreadSafe> FOnlineSessionICEPtr;
+
 /**
  * Main OnlineSubsystem implementation for ICE protocol
  * Provides P2P connectivity using STUN/TURN for NAT traversal

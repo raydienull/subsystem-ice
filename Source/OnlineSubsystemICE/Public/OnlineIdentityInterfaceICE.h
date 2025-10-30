@@ -8,6 +8,7 @@
 
 class FOnlineSubsystemICE;
 
+
 /**
  * Unique net ID implementation for ICE
  */
@@ -71,5 +72,3 @@ private:
 	/** Nicknames for logged in users */
 	TMap<FString, FString> UserNicknames;
 };
-
-typedef TSharedPtr<FOnlineIdentityICE, ESPMode::ThreadSafe> FOnlineIdentityICEPtr;
