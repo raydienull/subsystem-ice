@@ -19,6 +19,6 @@ public:
 	virtual bool SupportsAutomaticShutdown() override { return false; }
 
 private:
-	/** Handle to the OnlineSubsystemICE instance */
-	class FOnlineSubsystemICE* OnlineSubsystemICE;
+	/** Online subsystem factory */
+	class FOnlineFactoryICE* ICEFactory;
 };

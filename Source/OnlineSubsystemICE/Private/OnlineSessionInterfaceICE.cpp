@@ -263,7 +263,7 @@ bool FOnlineSessionICE::FindFriendSession(int32 LocalUserNum, const FUniqueNetId
 {
 	TArray<FUniqueNetIdRef> Friends;
 	Friends.Add(Friend.AsShared());
-	return FindFriendSession(*GetIdentityInterface()->GetUniquePlayerId(LocalUserNum), Friends);
+	return FindFriendSession(*Subsystem->GetIdentityInterface()->GetUniquePlayerId(LocalUserNum), Friends);
 }
 
 bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const FUniqueNetId& Friend)
