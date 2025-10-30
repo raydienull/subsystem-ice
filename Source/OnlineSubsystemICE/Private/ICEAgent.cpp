@@ -217,21 +217,6 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 
 	// Resolve STUN server address
 	TSharedPtr<FInternetAddr> STUNAddr = SocketSubsystem->GetAddressFromString(Host);
-	if (!STUNAddr.IsValid())
-	{
-		auto ResolveInfo = SocketSubsystem->GetHostByName(TCHAR_TO_ANSI(*Host));
-		if (ResolveInfo)
-		{
-			while (!ResolveInfo->IsComplete());
-			
-			if (ResolveInfo->GetErrorCode() == SE_NO_ERROR)
-			{
-				STUNAddr = SocketSubsystem->CreateInternetAddr();
-				STUNAddr->SetIp(ResolveInfo->GetResolvedAddress().GetIp());
-			}
-		}
-	}
-
 	if (!STUNAddr.IsValid() || !STUNAddr->IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to resolve STUN server: %s"), *Host);
@@ -395,21 +380,6 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 
 	// Resolve TURN server address
 	TSharedPtr<FInternetAddr> TURNAddr = SocketSubsystem->GetAddressFromString(Host);
-	if (!TURNAddr.IsValid())
-	{
-		auto ResolveInfo = SocketSubsystem->GetHostByName(TCHAR_TO_ANSI(*Host));
-		if (ResolveInfo)
-		{
-			while (!ResolveInfo->IsComplete());
-
-			if (ResolveInfo->GetErrorCode() == SE_NO_ERROR)
-			{
-				TURNAddr = SocketSubsystem->CreateInternetAddr();
-				TURNAddr->SetIp(ResolveInfo->GetResolvedAddress().GetIp());
-			}
-		}
-	}
-
 	if (!TURNAddr.IsValid() || !TURNAddr->IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to resolve TURN server: %s"), *Host);
