@@ -12,6 +12,8 @@
 class FOnlineSubsystemICEModule : public IModuleInterface
 {
 public:
+	FOnlineSubsystemICEModule();
+
 	// IModuleInterface
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;

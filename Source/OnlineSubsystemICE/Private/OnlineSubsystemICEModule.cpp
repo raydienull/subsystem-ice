@@ -42,6 +42,11 @@ public:
 	}
 };
 
+FOnlineSubsystemICEModule::FOnlineSubsystemICEModule()
+	: ICEFactory(nullptr)
+{
+}
+
 void FOnlineSubsystemICEModule::StartupModule()
 {
 	UE_LOG(LogOnlineICE, Log, TEXT("OnlineSubsystemICE Module Starting"));
@@ -59,11 +64,14 @@ void FOnlineSubsystemICEModule::ShutdownModule()
 	UE_LOG(LogOnlineICE, Log, TEXT("OnlineSubsystemICE Module Shutting Down"));
 
 	// Unregister the factory
-	FOnlineSubsystemModule& OSS = FModuleManager::GetModuleChecked<FOnlineSubsystemModule>("OnlineSubsystem");
-	OSS.UnregisterPlatformService(FName(TEXT("ICE")));
-	
-	delete ICEFactory;
-	ICEFactory = nullptr;
+	if (ICEFactory)
+	{
+		FOnlineSubsystemModule& OSS = FModuleManager::GetModuleChecked<FOnlineSubsystemModule>("OnlineSubsystem");
+		OSS.UnregisterPlatformService(FName(TEXT("ICE")));
+		
+		delete ICEFactory;
+		ICEFactory = nullptr;
+	}
 
 	UE_LOG(LogOnlineICE, Log, TEXT("OnlineSubsystemICE Module Shutdown Complete"));
 }
