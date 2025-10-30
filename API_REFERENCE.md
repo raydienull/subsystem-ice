@@ -790,7 +790,13 @@ void OnJoinSessionComplete(FName SessionName,
         SessionInterface->GetResolvedConnectString(SessionName, ConnectInfo);
         
         // 6. Travel to session
-        // APlayerController::ClientTravel(ConnectInfo, TRAVEL_Absolute);
+        // Note: Uncomment and use the appropriate player controller
+        // This will trigger client-side travel to the session
+        // APlayerController* PC = GetWorld()->GetFirstPlayerController();
+        // if (PC)
+        // {
+        //     PC->ClientTravel(ConnectInfo, TRAVEL_Absolute);
+        // }
     }
 }
 ```

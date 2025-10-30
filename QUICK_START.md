@@ -248,5 +248,9 @@ For production use, make sure to:
 - Implement proper error handling
 - Add UI feedback for connection states
 - Test with various network configurations
+- Implement authentication and authorization checks
+- Validate all user inputs and session data
+- Add rate limiting for connection attempts
+- Monitor and log security events
 
 Happy networking! 🚀
