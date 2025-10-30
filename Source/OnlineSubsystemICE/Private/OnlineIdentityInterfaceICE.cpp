@@ -232,7 +232,7 @@ FPlatformUserId FOnlineIdentityICE::GetPlatformUserIdFromUniqueNetId(const FUniq
 	{
 		if (*UserPair.Value == UniqueNetId)
 		{
-			return FPlatformUserId(UserPair.Key);
+			return FPlatformUserId::CreateFromInternalId(UserPair.Key);
 		}
 	}
 	return PLATFORMUSERID_NONE;
