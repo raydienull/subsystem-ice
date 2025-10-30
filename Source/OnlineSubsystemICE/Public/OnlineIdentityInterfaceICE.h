@@ -25,11 +25,6 @@ public:
 	virtual FString ToString() const override;
 	virtual FString ToDebugString() const override;
 
-	friend uint32 GetTypeHash(const FUniqueNetIdICE& A)
-	{
-		return ::GetTypeHash(A.UniqueNetIdStr);
-	}
-
 private:
 	FString UniqueNetIdStr;
 };
