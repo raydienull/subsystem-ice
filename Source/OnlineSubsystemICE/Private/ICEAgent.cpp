@@ -307,6 +307,13 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 
 				if (AttrType == 0x0020 && AttrLength >= 8) // XOR-MAPPED-ADDRESS
 				{
+					// Ensure we have enough bytes to read the attribute value
+					if (Offset + 4 + AttrLength > BytesRead)
+					{
+						UE_LOG(LogOnlineICE, Warning, TEXT("Incomplete XOR-MAPPED-ADDRESS attribute"));
+						break;
+					}
+
 					// Family (1 byte at offset 5)
 					uint8 Family = STUNResponse[Offset + 5];
 
@@ -511,6 +518,13 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 
 				if (AttrType == 0x0016 && AttrLength >= 8) // XOR-RELAYED-ADDRESS
 				{
+					// Ensure we have enough bytes to read the attribute value
+					if (AttrOffset + 4 + AttrLength > BytesRead)
+					{
+						UE_LOG(LogOnlineICE, Warning, TEXT("Incomplete XOR-RELAYED-ADDRESS attribute"));
+						break;
+					}
+
 					// Family (1 byte at offset 5)
 					uint8 Family = TURNResponse[AttrOffset + 5];
 

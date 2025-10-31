@@ -61,6 +61,9 @@ public:
 	virtual void RemoveNamedSession(FName SessionName) override;
 	virtual EOnlineSessionState::Type GetSessionState(FName SessionName) const override;
 	virtual bool HasPresenceSession() override;
+	virtual FNamedOnlineSession* AddNamedSession(FName SessionName, const FOnlineSessionSettings& SessionSettings) override;
+	virtual FNamedOnlineSession* AddNamedSession(FName SessionName, const FOnlineSession& Session) override;
+	virtual FUniqueNetIdPtr CreateSessionIdFromString(const FString& SessionIdStr) override;
 
 	/**
 	 * Tick function for handling periodic tasks

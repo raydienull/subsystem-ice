@@ -1,10 +1,12 @@
 # OnlineSubsystemICE
 
-A P2P connectivity plugin for Unreal Engine using ICE protocol (STUN/TURN) for NAT traversal.
+A P2P connectivity plugin for Unreal Engine 5.6+ using ICE protocol (STUN/TURN) for NAT traversal.
 
 ## Overview
 
 OnlineSubsystemICE provides an alternative to proprietary online subsystems like Steam for peer-to-peer connectivity. It uses standard protocols (ICE, STUN, TURN) to establish direct connections between players across different networks.
+
+**Requirements:** Unreal Engine 5.6 or later
 
 ## Features
 

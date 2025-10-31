@@ -253,16 +253,16 @@ bool FOnlineSessionICE::JoinSession(const FUniqueNetId& PlayerId, FName SessionN
 
 bool FOnlineSessionICE::FindFriendSession(int32 LocalUserNum, const FUniqueNetId& Friend)
 {
-	TArray<FUniqueNetIdRef> Friends;
-	Friends.Add(Friend.AsShared());
-	return FindFriendSession(*Subsystem->GetIdentityInterface()->GetUniquePlayerId(LocalUserNum), Friends);
+	UE_LOG(LogOnlineICE, Warning, TEXT("FindFriendSession not implemented yet"));
+	TriggerOnFindFriendSessionCompleteDelegates(LocalUserNum, false, TArray<FOnlineSessionSearchResult>());
+	return false;
 }
 
 bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const FUniqueNetId& Friend)
 {
-	TArray<FUniqueNetIdRef> Friends;
-	Friends.Add(Friend.AsShared());
-	return FindFriendSession(LocalUserId, Friends);
+	UE_LOG(LogOnlineICE, Warning, TEXT("FindFriendSession not implemented yet"));
+	TriggerOnFindFriendSessionCompleteDelegates(0, false, TArray<FOnlineSessionSearchResult>());
+	return false;
 }
 
 bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const TArray<FUniqueNetIdRef>& FriendList)
@@ -325,9 +325,46 @@ FOnlineSessionSettings* FOnlineSessionICE::GetSessionSettings(FName SessionName)
 
 bool FOnlineSessionICE::RegisterPlayer(FName SessionName, const FUniqueNetId& PlayerId, bool bWasInvited)
 {
-	TArray<FUniqueNetIdRef> Players;
-	Players.Add(PlayerId.AsShared());
-	return RegisterPlayers(SessionName, Players, bWasInvited);
+	UE_LOG(LogOnlineICE, Log, TEXT("RegisterPlayer: %s"), *SessionName.ToString());
+
+	FNamedOnlineSession* Session = GetNamedSession(SessionName);
+	if (!Session)
+	{
+		TArray<FUniqueNetIdRef> EmptyArray;
+		TriggerOnRegisterPlayersCompleteDelegates(SessionName, EmptyArray, false);
+		return false;
+	}
+
+	// Check if player already registered (to reuse existing shared pointer)
+	for (const FUniqueNetIdRef& ExistingPlayer : Session->RegisteredPlayers)
+	{
+		if (*ExistingPlayer == PlayerId)
+		{
+			// Already registered, just trigger success delegate
+			TArray<FUniqueNetIdRef> Players;
+			Players.Add(ExistingPlayer);
+			TriggerOnRegisterPlayersCompleteDelegates(SessionName, Players, true);
+			return true;
+		}
+	}
+
+	// Create a new copy for storage using string representation
+	// Note: This involves a string conversion, but it's safe and avoids const_cast
+	FUniqueNetIdPtr PlayerIdCopy = Subsystem->GetIdentityInterface()->CreateUniquePlayerId(PlayerId.ToString());
+	
+	if (PlayerIdCopy.IsValid())
+	{
+		Session->RegisteredPlayers.AddUnique(PlayerIdCopy.ToSharedRef());
+		
+		TArray<FUniqueNetIdRef> Players;
+		Players.Add(PlayerIdCopy.ToSharedRef());
+		TriggerOnRegisterPlayersCompleteDelegates(SessionName, Players, true);
+		return true;
+	}
+	
+	TArray<FUniqueNetIdRef> EmptyArray;
+	TriggerOnRegisterPlayersCompleteDelegates(SessionName, EmptyArray, false);
+	return false;
 }
 
 bool FOnlineSessionICE::RegisterPlayers(FName SessionName, const TArray<FUniqueNetIdRef>& Players, bool bWasInvited)
@@ -352,9 +389,32 @@ bool FOnlineSessionICE::RegisterPlayers(FName SessionName, const TArray<FUniqueN
 
 bool FOnlineSessionICE::UnregisterPlayer(FName SessionName, const FUniqueNetId& PlayerId)
 {
-	TArray<FUniqueNetIdRef> Players;
-	Players.Add(PlayerId.AsShared());
-	return UnregisterPlayers(SessionName, Players);
+	UE_LOG(LogOnlineICE, Log, TEXT("UnregisterPlayer: %s"), *SessionName.ToString());
+
+	FNamedOnlineSession* Session = GetNamedSession(SessionName);
+	if (!Session)
+	{
+		TArray<FUniqueNetIdRef> EmptyArray;
+		TriggerOnUnregisterPlayersCompleteDelegates(SessionName, EmptyArray, false);
+		return false;
+	}
+
+	// Find and remove the matching player
+	TArray<FUniqueNetIdRef> RemovedPlayers;
+	for (int32 i = Session->RegisteredPlayers.Num() - 1; i >= 0; --i)
+	{
+		if (*Session->RegisteredPlayers[i] == PlayerId)
+		{
+			RemovedPlayers.Add(Session->RegisteredPlayers[i]);
+			Session->RegisteredPlayers.RemoveAt(i);
+			break;
+		}
+	}
+
+	// Trigger delegate once after the operation
+	bool bSuccess = RemovedPlayers.Num() > 0;
+	TriggerOnUnregisterPlayersCompleteDelegates(SessionName, RemovedPlayers, bSuccess);
+	return bSuccess;
 }
 
 bool FOnlineSessionICE::UnregisterPlayers(FName SessionName, const TArray<FUniqueNetIdRef>& Players)
@@ -433,6 +493,50 @@ bool FOnlineSessionICE::HasPresenceSession()
 		}
 	}
 	return false;
+}
+
+FNamedOnlineSession* FOnlineSessionICE::AddNamedSession(FName SessionName, const FOnlineSessionSettings& SessionSettings)
+{
+	UE_LOG(LogOnlineICE, Log, TEXT("AddNamedSession: %s"), *SessionName.ToString());
+	
+	// Check if session already exists
+	FNamedOnlineSession* Session = GetNamedSession(SessionName);
+	if (Session)
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Session '%s' already exists"), *SessionName.ToString());
+		return Session;
+	}
+	
+	// Create and add new session
+	FNamedOnlineSession& NewSession = Sessions.Add(SessionName, FNamedOnlineSession(SessionName, SessionSettings));
+	return &NewSession;
+}
+
+FNamedOnlineSession* FOnlineSessionICE::AddNamedSession(FName SessionName, const FOnlineSession& Session)
+{
+	UE_LOG(LogOnlineICE, Log, TEXT("AddNamedSession from FOnlineSession: %s"), *SessionName.ToString());
+	
+	// Check if session already exists
+	FNamedOnlineSession* ExistingSession = GetNamedSession(SessionName);
+	if (ExistingSession)
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Session '%s' already exists"), *SessionName.ToString());
+		return ExistingSession;
+	}
+	
+	// Create and add new session from FOnlineSession
+	FNamedOnlineSession& NewSession = Sessions.Add(SessionName, FNamedOnlineSession(SessionName, Session));
+	return &NewSession;
+}
+
+FUniqueNetIdPtr FOnlineSessionICE::CreateSessionIdFromString(const FString& SessionIdStr)
+{
+	// Use the identity interface to create a unique ID from the string
+	if (Subsystem && Subsystem->GetIdentityInterface().IsValid())
+	{
+		return Subsystem->GetIdentityInterface()->CreateUniquePlayerId(SessionIdStr);
+	}
+	return nullptr;
 }
 
 void FOnlineSessionICE::Tick(float DeltaTime)

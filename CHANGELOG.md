@@ -39,11 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No DTLS encryption yet
 - Matchmaking service integration pending
 
+## [2.0.0] - 2024-10-31
+
+### Changed
+- **BREAKING**: Updated to require Unreal Engine 5.6+
+- Removed backward compatibility with older Unreal Engine versions
+- Moved from beta to stable release
+
+### Removed
+- Support for Unreal Engine versions prior to 5.6
+
 ## [Unreleased]
 
 ### Planned Features
 - Signaling server implementation
-- Full TURN relay support (RFC 5766)
 - DTLS encryption for secure P2P
 - Matchmaking service integration
 - Lobby system
