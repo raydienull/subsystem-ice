@@ -348,10 +348,9 @@ bool FOnlineSessionICE::RegisterPlayer(FName SessionName, const FUniqueNetId& Pl
 		}
 	}
 
-	// Create a new copy for storage using byte data
-	const uint8* Bytes = PlayerId.GetBytes();
-	int32 Size = PlayerId.GetSize();
-	FUniqueNetIdPtr PlayerIdCopy = Subsystem->GetIdentityInterface()->CreateUniquePlayerId(const_cast<uint8*>(Bytes), Size);
+	// Create a new copy for storage using string representation
+	// Note: This involves a string conversion, but it's safe and avoids const_cast
+	FUniqueNetIdPtr PlayerIdCopy = Subsystem->GetIdentityInterface()->CreateUniquePlayerId(PlayerId.ToString());
 	
 	if (PlayerIdCopy.IsValid())
 	{
