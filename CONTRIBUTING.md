@@ -51,8 +51,8 @@ We are committed to providing a welcoming and inclusive environment for all cont
 
 ### Prerequisites
 
-- Unreal Engine 4.27+ or UE5.x
-- Visual Studio 2019/2022 (Windows) or Xcode (Mac) or CLang (Linux)
+- Unreal Engine 5.6 or later
+- Visual Studio 2022 (Windows) or Xcode (Mac) or Clang (Linux)
 - Git
 
 ### Building the Plugin
@@ -366,9 +366,9 @@ What you expected to happen
 What actually happened
 
 **Environment**
-- OS: [e.g., Windows 10]
-- Unreal Engine Version: [e.g., 5.3]
-- Plugin Version: [e.g., 1.0.0]
+- OS: [e.g., Windows 11]
+- Unreal Engine Version: [e.g., 5.6]
+- Plugin Version: [e.g., 2.0.0]
 
 **Logs**
 ```

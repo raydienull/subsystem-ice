@@ -4,7 +4,7 @@ This guide provides step-by-step instructions for integrating OnlineSubsystemICE
 
 ## Prerequisites
 
-- Unreal Engine 4.27+ or Unreal Engine 5.x
+- Unreal Engine 5.6 or later
 - Basic understanding of Unreal Engine's Online Subsystem
 - C++ project (required for plugin integration)
 
