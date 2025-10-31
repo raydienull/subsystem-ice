@@ -80,7 +80,7 @@ public:
 	 */
 	const FString& GetTURNCredential() const { return TURNCredential; }
 
-PACKAGE_SCOPE:
+public:
 	/** Only the factory makes instances */
 	FOnlineSubsystemICE() = delete;
 	explicit FOnlineSubsystemICE(FName InInstanceName);
