@@ -495,6 +495,50 @@ bool FOnlineSessionICE::HasPresenceSession()
 	return false;
 }
 
+FNamedOnlineSession* FOnlineSessionICE::AddNamedSession(FName SessionName, const FOnlineSessionSettings& SessionSettings)
+{
+	UE_LOG(LogOnlineICE, Log, TEXT("AddNamedSession: %s"), *SessionName.ToString());
+	
+	// Check if session already exists
+	FNamedOnlineSession* Session = GetNamedSession(SessionName);
+	if (Session)
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Session '%s' already exists"), *SessionName.ToString());
+		return Session;
+	}
+	
+	// Create and add new session
+	FNamedOnlineSession& NewSession = Sessions.Add(SessionName, FNamedOnlineSession(SessionName, SessionSettings));
+	return &NewSession;
+}
+
+FNamedOnlineSession* FOnlineSessionICE::AddNamedSession(FName SessionName, const FOnlineSession& Session)
+{
+	UE_LOG(LogOnlineICE, Log, TEXT("AddNamedSession from FOnlineSession: %s"), *SessionName.ToString());
+	
+	// Check if session already exists
+	FNamedOnlineSession* ExistingSession = GetNamedSession(SessionName);
+	if (ExistingSession)
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Session '%s' already exists"), *SessionName.ToString());
+		return ExistingSession;
+	}
+	
+	// Create and add new session from FOnlineSession
+	FNamedOnlineSession& NewSession = Sessions.Add(SessionName, FNamedOnlineSession(SessionName, Session));
+	return &NewSession;
+}
+
+FUniqueNetIdPtr FOnlineSessionICE::CreateSessionIdFromString(const FString& SessionIdStr)
+{
+	// Use the identity interface to create a unique ID from the string
+	if (Subsystem && Subsystem->GetIdentityInterface().IsValid())
+	{
+		return Subsystem->GetIdentityInterface()->CreateUniquePlayerId(SessionIdStr);
+	}
+	return nullptr;
+}
+
 void FOnlineSessionICE::Tick(float DeltaTime)
 {
 	// Periodic processing for sessions
