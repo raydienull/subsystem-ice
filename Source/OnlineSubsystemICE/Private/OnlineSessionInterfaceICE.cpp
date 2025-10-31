@@ -335,8 +335,24 @@ bool FOnlineSessionICE::RegisterPlayer(FName SessionName, const FUniqueNetId& Pl
 		return false;
 	}
 
-	// Create a copy as a shared pointer for storage
-	FUniqueNetIdPtr PlayerIdCopy = Subsystem->GetIdentityInterface()->CreateUniquePlayerId(PlayerId.ToString());
+	// Check if player already registered (to reuse existing shared pointer)
+	for (const FUniqueNetIdRef& ExistingPlayer : Session->RegisteredPlayers)
+	{
+		if (*ExistingPlayer == PlayerId)
+		{
+			// Already registered, just trigger success delegate
+			TArray<FUniqueNetIdRef> Players;
+			Players.Add(ExistingPlayer);
+			TriggerOnRegisterPlayersCompleteDelegates(SessionName, Players, true);
+			return true;
+		}
+	}
+
+	// Create a new copy for storage using byte data
+	const uint8* Bytes = PlayerId.GetBytes();
+	int32 Size = PlayerId.GetSize();
+	FUniqueNetIdPtr PlayerIdCopy = Subsystem->GetIdentityInterface()->CreateUniquePlayerId(const_cast<uint8*>(Bytes), Size);
+	
 	if (PlayerIdCopy.IsValid())
 	{
 		Session->RegisteredPlayers.AddUnique(PlayerIdCopy.ToSharedRef());
@@ -385,27 +401,21 @@ bool FOnlineSessionICE::UnregisterPlayer(FName SessionName, const FUniqueNetId& 
 	}
 
 	// Find and remove the matching player
-	bool bRemoved = false;
+	TArray<FUniqueNetIdRef> RemovedPlayers;
 	for (int32 i = Session->RegisteredPlayers.Num() - 1; i >= 0; --i)
 	{
 		if (*Session->RegisteredPlayers[i] == PlayerId)
 		{
-			TArray<FUniqueNetIdRef> Players;
-			Players.Add(Session->RegisteredPlayers[i]);
+			RemovedPlayers.Add(Session->RegisteredPlayers[i]);
 			Session->RegisteredPlayers.RemoveAt(i);
-			TriggerOnUnregisterPlayersCompleteDelegates(SessionName, Players, true);
-			bRemoved = true;
 			break;
 		}
 	}
 
-	if (!bRemoved)
-	{
-		TArray<FUniqueNetIdRef> EmptyArray;
-		TriggerOnUnregisterPlayersCompleteDelegates(SessionName, EmptyArray, false);
-	}
-
-	return bRemoved;
+	// Trigger delegate once after the operation
+	bool bSuccess = RemovedPlayers.Num() > 0;
+	TriggerOnUnregisterPlayersCompleteDelegates(SessionName, RemovedPlayers, bSuccess);
+	return bSuccess;
 }
 
 bool FOnlineSessionICE::UnregisterPlayers(FName SessionName, const TArray<FUniqueNetIdRef>& Players)
