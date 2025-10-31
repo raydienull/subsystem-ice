@@ -158,12 +158,12 @@ void OnFindSessionsComplete(bool bWasSuccessful)
 OnlineSubsystemICE includes console commands for manual testing:
 
 ```
-ICE SETREMOTEPEER <ip> <port>     - Set remote peer address
-ICE ADDCANDIDATE <candidate>      - Add remote ICE candidate
-ICE LISTCANDIDATES                - List local ICE candidates
-ICE STARTCHECKS                   - Start connectivity checks
-ICE STATUS                        - Show connection status
-ICE HELP                          - Show all commands
+ICE.SETREMOTEPEER <ip> <port>     - Set remote peer address
+ICE.ADDCANDIDATE <candidate>      - Add remote ICE candidate
+ICE.LISTCANDIDATES                - List local ICE candidates
+ICE.STARTCHECKS                   - Start connectivity checks
+ICE.STATUS                        - Show connection status
+ICE.HELP                          - Show all commands
 ```
 
 See [TESTING_GUIDE.md](TESTING_GUIDE.md) for complete testing workflows.

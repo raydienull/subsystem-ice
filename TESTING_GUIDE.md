@@ -11,12 +11,12 @@ For local testing without a signaling server, OnlineSubsystemICE provides consol
 ### Available Commands
 
 ```
-ICE HELP                          - Show available commands
-ICE SETREMOTEPEER <ip> <port>     - Set remote peer address
-ICE ADDCANDIDATE <candidate>      - Add remote ICE candidate
-ICE LISTCANDIDATES                - List local ICE candidates
-ICE STARTCHECKS                   - Start connectivity checks
-ICE STATUS                        - Show connection status
+ICE.HELP                          - Show available commands
+ICE.SETREMOTEPEER <ip> <port>     - Set remote peer address
+ICE.ADDCANDIDATE <candidate>      - Add remote ICE candidate
+ICE.LISTCANDIDATES                - List local ICE candidates
+ICE.STARTCHECKS                   - Start connectivity checks
+ICE.STATUS                        - Show connection status
 ```
 
 ## Testing Workflow
@@ -33,7 +33,7 @@ ICE STATUS                        - Show connection status
 On both instances, open the console (`~` key) and type:
 
 ```
-ICE LISTCANDIDATES
+ICE.LISTCANDIDATES
 ```
 
 **Expected Output:**
@@ -49,27 +49,27 @@ Copy the candidates from each instance.
 
 #### On Instance A (Host):
 ```
-ICE SETREMOTEPEER 192.168.1.101 5000
+ICE.SETREMOTEPEER 192.168.1.101 5000
 ```
 or add the full candidate:
 ```
-ICE ADDCANDIDATE candidate:1 1 UDP 2130706431 192.168.1.101 5000 typ host
+ICE.ADDCANDIDATE candidate:1 1 UDP 2130706431 192.168.1.101 5000 typ host
 ```
 
 #### On Instance B (Client):
 ```
-ICE SETREMOTEPEER 192.168.1.100 5000
+ICE.SETREMOTEPEER 192.168.1.100 5000
 ```
 or add the full candidate:
 ```
-ICE ADDCANDIDATE candidate:1 1 UDP 2130706431 192.168.1.100 5000 typ host
+ICE.ADDCANDIDATE candidate:1 1 UDP 2130706431 192.168.1.100 5000 typ host
 ```
 
 ### Step 3: Start Connectivity Checks
 
 On both instances:
 ```
-ICE STARTCHECKS
+ICE.STARTCHECKS
 ```
 
 **Expected Output:**
@@ -81,7 +81,7 @@ ICE: Connectivity checks started
 
 Check the connection status on both instances:
 ```
-ICE STATUS
+ICE.STATUS
 ```
 
 **Expected Output:**
@@ -106,17 +106,17 @@ Remote Peer: 192.168.1.101:5000
 **Commands:**
 ```
 # Instance A
-ICE LISTCANDIDATES
+ICE.LISTCANDIDATES
 # Copy the host candidate (typ host)
 # Note the IP and port
 
 # Instance B
-ICE SETREMOTEPEER <Instance_A_IP> <Instance_A_Port>
-ICE STARTCHECKS
+ICE.SETREMOTEPEER <Instance_A_IP> <Instance_A_Port>
+ICE.STARTCHECKS
 
 # Instance A
-ICE SETREMOTEPEER <Instance_B_IP> <Instance_B_Port>
-ICE STARTCHECKS
+ICE.SETREMOTEPEER <Instance_B_IP> <Instance_B_Port>
+ICE.STARTCHECKS
 ```
 
 ### Scenario 2: WAN Testing (Different Networks)
@@ -128,18 +128,18 @@ ICE STARTCHECKS
 **Commands:**
 ```
 # Both instances
-ICE LISTCANDIDATES
+ICE.LISTCANDIDATES
 # Note the server reflexive candidate (typ srflx) - this is your public IP
 
 # Exchange the srflx candidates
 # Instance A
-ICE ADDCANDIDATE candidate:2 1 UDP 1694498815 <Instance_B_Public_IP> <Port> typ srflx
+ICE.ADDCANDIDATE candidate:2 1 UDP 1694498815 <Instance_B_Public_IP> <Port> typ srflx
 
 # Instance B
-ICE ADDCANDIDATE candidate:2 1 UDP 1694498815 <Instance_A_Public_IP> <Port> typ srflx
+ICE.ADDCANDIDATE candidate:2 1 UDP 1694498815 <Instance_A_Public_IP> <Port> typ srflx
 
 # Both instances
-ICE STARTCHECKS
+ICE.STARTCHECKS
 ```
 
 ### Scenario 3: TURN Relay Testing
@@ -159,18 +159,18 @@ TURNCredential=testpass
 **Commands:**
 ```
 # Both instances
-ICE LISTCANDIDATES
+ICE.LISTCANDIDATES
 # You should see relay candidates (typ relay) if TURN is working
 
 # Exchange relay candidates
 # Instance A
-ICE ADDCANDIDATE candidate:3 1 UDP 16777215 <Relay_IP> <Relay_Port> typ relay
+ICE.ADDCANDIDATE candidate:3 1 UDP 16777215 <Relay_IP> <Relay_Port> typ relay
 
 # Instance B  
-ICE ADDCANDIDATE candidate:3 1 UDP 16777215 <Relay_IP> <Relay_Port> typ relay
+ICE.ADDCANDIDATE candidate:3 1 UDP 16777215 <Relay_IP> <Relay_Port> typ relay
 
 # Both instances
-ICE STARTCHECKS
+ICE.STARTCHECKS
 ```
 
 ## Troubleshooting
@@ -248,17 +248,17 @@ LogOnlineICE: TURN Allocate failed - error response received
 **Instance A (Port 7777):**
 ```
 PIE Session 1 (Console)
-> ICE LISTCANDIDATES
+> ICE.LISTCANDIDATES
 ICE: Local candidates (1):
   candidate:1 1 UDP 2130706431 127.0.0.1 7777 typ host
 
-> ICE SETREMOTEPEER 127.0.0.1 7778
+> ICE.SETREMOTEPEER 127.0.0.1 7778
 ICE: Remote peer set to 127.0.0.1:7778
 
-> ICE STARTCHECKS
+> ICE.STARTCHECKS
 ICE: Connectivity checks started
 
-> ICE STATUS
+> ICE.STATUS
 === ICE Connection Status ===
 Connected: Yes
 Local Candidates: 1
@@ -270,17 +270,17 @@ Remote Peer: 127.0.0.1:7778
 **Instance B (Port 7778):**
 ```
 PIE Session 2 (Console)
-> ICE LISTCANDIDATES
+> ICE.LISTCANDIDATES
 ICE: Local candidates (1):
   candidate:1 1 UDP 2130706431 127.0.0.1 7778 typ host
 
-> ICE SETREMOTEPEER 127.0.0.1 7777
+> ICE.SETREMOTEPEER 127.0.0.1 7777
 ICE: Remote peer set to 127.0.0.1:7777
 
-> ICE STARTCHECKS
+> ICE.STARTCHECKS
 ICE: Connectivity checks started
 
-> ICE STATUS
+> ICE.STATUS
 === ICE Connection Status ===
 Connected: Yes
 Local Candidates: 1
@@ -303,8 +303,8 @@ static void SetupTestConnection(FString RemoteIP, int32 RemotePort)
     if (GEngine && GEngine->GameViewport)
     {
         GEngine->Exec(GEngine->GameViewport->GetWorld(), 
-            *FString::Printf(TEXT("ICE SETREMOTEPEER %s %d"), *RemoteIP, RemotePort));
-        GEngine->Exec(GEngine->GameViewport->GetWorld(), TEXT("ICE STARTCHECKS"));
+            *FString::Printf(TEXT("ICE.SETREMOTEPEER %s %d"), *RemoteIP, RemotePort));
+        GEngine->Exec(GEngine->GameViewport->GetWorld(), TEXT("ICE.STARTCHECKS"));
     }
 }
 ```

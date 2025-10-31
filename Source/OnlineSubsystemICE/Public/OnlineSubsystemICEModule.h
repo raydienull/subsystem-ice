@@ -23,4 +23,7 @@ public:
 private:
 	/** Online subsystem factory */
 	class FOnlineFactoryICE* ICEFactory;
+
+	/** Console command objects */
+	TArray<IConsoleObject*> ConsoleCommands;
 };
