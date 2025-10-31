@@ -105,7 +105,8 @@ void FICEAgent::GatherHostCandidates()
 	}
 
 	// Get local address
-	TSharedPtr<FInternetAddr> LocalAddr = SocketSubsystem->GetLocalHostAddr(*GLog, false);
+	bool bCanBindAll;
+	TSharedPtr<FInternetAddr> LocalAddr = SocketSubsystem->GetLocalHostAddr(*GLog, bCanBindAll);
 	if (!LocalAddr.IsValid() || !LocalAddr->IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to get local address"));
@@ -216,21 +217,6 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 
 	// Resolve STUN server address
 	TSharedPtr<FInternetAddr> STUNAddr = SocketSubsystem->GetAddressFromString(Host);
-	if (!STUNAddr.IsValid())
-	{
-		auto ResolveInfo = SocketSubsystem->GetHostByName(TCHAR_TO_ANSI(*Host));
-		if (ResolveInfo)
-		{
-			while (!ResolveInfo->IsComplete());
-			
-			if (ResolveInfo->GetErrorCode() == SE_NO_ERROR)
-			{
-				STUNAddr = SocketSubsystem->CreateInternetAddr();
-				STUNAddr->SetIp(ResolveInfo->GetResolvedAddress().GetIp());
-			}
-		}
-	}
-
 	if (!STUNAddr.IsValid() || !STUNAddr->IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to resolve STUN server: %s"), *Host);
@@ -394,21 +380,6 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 
 	// Resolve TURN server address
 	TSharedPtr<FInternetAddr> TURNAddr = SocketSubsystem->GetAddressFromString(Host);
-	if (!TURNAddr.IsValid())
-	{
-		auto ResolveInfo = SocketSubsystem->GetHostByName(TCHAR_TO_ANSI(*Host));
-		if (ResolveInfo)
-		{
-			while (!ResolveInfo->IsComplete());
-
-			if (ResolveInfo->GetErrorCode() == SE_NO_ERROR)
-			{
-				TURNAddr = SocketSubsystem->CreateInternetAddr();
-				TURNAddr->SetIp(ResolveInfo->GetResolvedAddress().GetIp());
-			}
-		}
-	}
-
 	if (!TURNAddr.IsValid() || !TURNAddr->IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to resolve TURN server: %s"), *Host);
@@ -522,7 +493,7 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 	if (BytesRead >= 20)
 	{
 		uint16 MessageType = (TURNResponse[0] << 8) | TURNResponse[1];
-		uint16 MessageLength = (TURNResponse[2] << 8) | TURNResponse[3];
+		MessageLength = (TURNResponse[2] << 8) | TURNResponse[3];
 
 		// Check if it's an Allocate Success Response (0x0103)
 		if (MessageType == 0x0103 && BytesRead >= 20 + MessageLength)
@@ -664,8 +635,12 @@ bool FICEAgent::StartConnectivityChecks()
 		return false;
 	}
 
-	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->CreateInternetAddr();
-	RemoteAddr->SetIp(*SelectedRemoteCandidate.Address);
+	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->GetAddressFromString(SelectedRemoteCandidate.Address);
+	if (!RemoteAddr.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to parse remote address: %s"), *SelectedRemoteCandidate.Address);
+		return false;
+	}
 	RemoteAddr->SetPort(SelectedRemoteCandidate.Port);
 
 	Socket = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("ICE"), RemoteAddr->GetProtocolType());
@@ -699,8 +674,11 @@ bool FICEAgent::SendData(const uint8* Data, int32 Size)
 		return false;
 	}
 
-	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->CreateInternetAddr();
-	RemoteAddr->SetIp(*SelectedRemoteCandidate.Address);
+	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->GetAddressFromString(SelectedRemoteCandidate.Address);
+	if (!RemoteAddr.IsValid())
+	{
+		return false;
+	}
 	RemoteAddr->SetPort(SelectedRemoteCandidate.Port);
 
 	int32 BytesSent;

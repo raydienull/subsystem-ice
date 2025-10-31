@@ -8,6 +8,7 @@
 
 class FOnlineSubsystemICE;
 
+
 /**
  * Unique net ID implementation for ICE
  */
@@ -24,11 +25,6 @@ public:
 	virtual bool IsValid() const override;
 	virtual FString ToString() const override;
 	virtual FString ToDebugString() const override;
-
-	friend uint32 GetTypeHash(const FUniqueNetIdICE& A)
-	{
-		return GetTypeHash(A.UniqueNetIdStr);
-	}
 
 private:
 	FString UniqueNetIdStr;
@@ -59,7 +55,7 @@ public:
 	virtual FString GetPlayerNickname(const FUniqueNetId& UserId) const override;
 	virtual FString GetAuthToken(int32 LocalUserNum) const override;
 	virtual void RevokeAuthToken(const FUniqueNetId& UserId, const FOnRevokeAuthTokenCompleteDelegate& Delegate) override;
-	virtual void GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate) override;
+	virtual void GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI = EShowPrivilegeResolveUI::Default) override;
 	virtual FPlatformUserId GetPlatformUserIdFromUniqueNetId(const FUniqueNetId& UniqueNetId) const override;
 	virtual FString GetAuthType() const override;
 
@@ -76,5 +72,3 @@ private:
 	/** Nicknames for logged in users */
 	TMap<FString, FString> UserNicknames;
 };
-
-typedef TSharedPtr<FOnlineIdentityICE, ESPMode::ThreadSafe> FOnlineIdentityICEPtr;

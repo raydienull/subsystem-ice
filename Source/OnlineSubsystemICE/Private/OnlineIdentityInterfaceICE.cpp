@@ -2,6 +2,7 @@
 
 #include "OnlineIdentityInterfaceICE.h"
 #include "OnlineSubsystemICE.h"
+#include "OnlineError.h"
 #include "Misc/Guid.h"
 
 // FUniqueNetIdICE implementation
@@ -219,7 +220,7 @@ void FOnlineIdentityICE::RevokeAuthToken(const FUniqueNetId& UserId, const FOnRe
 	Delegate.ExecuteIfBound(UserId, FOnlineError(false));
 }
 
-void FOnlineIdentityICE::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate)
+void FOnlineIdentityICE::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI)
 {
 	// For a basic implementation, grant all privileges
 	Delegate.ExecuteIfBound(UserId, Privilege, static_cast<uint32>(IOnlineIdentity::EPrivilegeResults::NoFailures));
@@ -231,7 +232,7 @@ FPlatformUserId FOnlineIdentityICE::GetPlatformUserIdFromUniqueNetId(const FUniq
 	{
 		if (*UserPair.Value == UniqueNetId)
 		{
-			return FPlatformUserId(UserPair.Key);
+			return FPlatformUserId::CreateFromInternalId(UserPair.Key);
 		}
 	}
 	return PLATFORMUSERID_NONE;

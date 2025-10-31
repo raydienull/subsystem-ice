@@ -9,6 +9,8 @@
 
 class FOnlineSubsystemICE;
 
+
+
 /**
  * Session interface implementation for ICE
  * Handles session creation, joining, and P2P connection management
@@ -107,5 +109,3 @@ private:
 	FString RemotePeerIP;
 	int32 RemotePeerPort;
 };
-
-typedef TSharedPtr<FOnlineSessionICE, ESPMode::ThreadSafe> FOnlineSessionICEPtr;

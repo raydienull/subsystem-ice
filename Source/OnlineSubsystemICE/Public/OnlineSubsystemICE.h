@@ -11,6 +11,9 @@ class FOnlineSessionICE;
 class FOnlineIdentityICE;
 class FSocketSubsystemICE;
 
+typedef TSharedPtr<FOnlineIdentityICE, ESPMode::ThreadSafe> FOnlineIdentityICEPtr;
+typedef TSharedPtr<FOnlineSessionICE, ESPMode::ThreadSafe> FOnlineSessionICEPtr;
+
 /**
  * Main OnlineSubsystem implementation for ICE protocol
  * Provides P2P connectivity using STUN/TURN for NAT traversal
@@ -77,7 +80,7 @@ public:
 	 */
 	const FString& GetTURNCredential() const { return TURNCredential; }
 
-PACKAGE_SCOPE:
+public:
 	/** Only the factory makes instances */
 	FOnlineSubsystemICE() = delete;
 	explicit FOnlineSubsystemICE(FName InInstanceName);

@@ -55,13 +55,9 @@ bool FOnlineSessionICE::CreateSession(int32 HostingPlayerNum, FName SessionName,
 	}
 
 	// Create a new session
-	FNamedOnlineSession NewSession;
-	NewSession.SessionName = SessionName;
-	NewSession.SessionSettings = NewSessionSettings;
+	FNamedOnlineSession& NewSession = Sessions.Add(SessionName, FNamedOnlineSession(SessionName, NewSessionSettings));
 	NewSession.HostingPlayerNum = HostingPlayerNum;
 	NewSession.SessionState = EOnlineSessionState::Creating;
-
-	Sessions.Add(SessionName, NewSession);
 
 	// Mark session as pending (in a real implementation, we would gather ICE candidates here)
 	Session = GetNamedSession(SessionName);
@@ -241,13 +237,9 @@ bool FOnlineSessionICE::JoinSession(int32 PlayerNum, FName SessionName, const FO
 	}
 
 	// Create a new session based on the search result
-	FNamedOnlineSession NewSession;
-	NewSession.SessionName = SessionName;
-	NewSession.SessionSettings = DesiredSession.Session.SessionSettings;
+	FNamedOnlineSession& NewSession = Sessions.Add(SessionName, FNamedOnlineSession(SessionName, DesiredSession.Session.SessionSettings));
 	NewSession.HostingPlayerNum = PlayerNum;
 	NewSession.SessionState = EOnlineSessionState::Pending;
-
-	Sessions.Add(SessionName, NewSession);
 
 	// In a real implementation, we would initiate ICE connection here
 	TriggerOnJoinSessionCompleteDelegates(SessionName, EOnJoinSessionCompleteResult::Success);
@@ -263,7 +255,7 @@ bool FOnlineSessionICE::FindFriendSession(int32 LocalUserNum, const FUniqueNetId
 {
 	TArray<FUniqueNetIdRef> Friends;
 	Friends.Add(Friend.AsShared());
-	return FindFriendSession(*GetIdentityInterface()->GetUniquePlayerId(LocalUserNum), Friends);
+	return FindFriendSession(*Subsystem->GetIdentityInterface()->GetUniquePlayerId(LocalUserNum), Friends);
 }
 
 bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const FUniqueNetId& Friend)
