@@ -435,6 +435,25 @@ bool FOnlineSessionICE::HasPresenceSession()
 	return false;
 }
 
+const FNamedOnlineSession* FOnlineSessionICE::GetNamedSession(FName SessionName) const
+{
+	return Sessions.Find(SessionName);
+}
+
+TArray<FNamedOnlineSession>& FOnlineSessionICE::GetAllSessions()
+{
+	// Convert TMap to TArray and return
+	// Note: This creates a temporary array each time, which is not ideal
+	// but matches the expected interface signature
+	static TArray<FNamedOnlineSession> SessionsArray;
+	SessionsArray.Reset();
+	for (const auto& SessionPair : Sessions)
+	{
+		SessionsArray.Add(SessionPair.Value);
+	}
+	return SessionsArray;
+}
+
 void FOnlineSessionICE::Tick(float DeltaTime)
 {
 	// Periodic processing for sessions
