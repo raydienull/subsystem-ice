@@ -253,16 +253,16 @@ bool FOnlineSessionICE::JoinSession(const FUniqueNetId& PlayerId, FName SessionN
 
 bool FOnlineSessionICE::FindFriendSession(int32 LocalUserNum, const FUniqueNetId& Friend)
 {
-	TArray<FUniqueNetIdRef> Friends;
-	Friends.Add(Friend.AsShared());
-	return FindFriendSession(*Subsystem->GetIdentityInterface()->GetUniquePlayerId(LocalUserNum), Friends);
+	UE_LOG(LogOnlineICE, Warning, TEXT("FindFriendSession not implemented yet"));
+	TriggerOnFindFriendSessionCompleteDelegates(LocalUserNum, false, TArray<FOnlineSessionSearchResult>());
+	return false;
 }
 
 bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const FUniqueNetId& Friend)
 {
-	TArray<FUniqueNetIdRef> Friends;
-	Friends.Add(Friend.AsShared());
-	return FindFriendSession(LocalUserId, Friends);
+	UE_LOG(LogOnlineICE, Warning, TEXT("FindFriendSession not implemented yet"));
+	TriggerOnFindFriendSessionCompleteDelegates(0, false, TArray<FOnlineSessionSearchResult>());
+	return false;
 }
 
 bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const TArray<FUniqueNetIdRef>& FriendList)
@@ -325,9 +325,31 @@ FOnlineSessionSettings* FOnlineSessionICE::GetSessionSettings(FName SessionName)
 
 bool FOnlineSessionICE::RegisterPlayer(FName SessionName, const FUniqueNetId& PlayerId, bool bWasInvited)
 {
-	TArray<FUniqueNetIdRef> Players;
-	Players.Add(PlayerId.AsShared());
-	return RegisterPlayers(SessionName, Players, bWasInvited);
+	UE_LOG(LogOnlineICE, Log, TEXT("RegisterPlayer: %s"), *SessionName.ToString());
+
+	FNamedOnlineSession* Session = GetNamedSession(SessionName);
+	if (!Session)
+	{
+		TArray<FUniqueNetIdRef> EmptyArray;
+		TriggerOnRegisterPlayersCompleteDelegates(SessionName, EmptyArray, false);
+		return false;
+	}
+
+	// Create a copy as a shared pointer for storage
+	FUniqueNetIdPtr PlayerIdCopy = Subsystem->GetIdentityInterface()->CreateUniquePlayerId(PlayerId.ToString());
+	if (PlayerIdCopy.IsValid())
+	{
+		Session->RegisteredPlayers.AddUnique(PlayerIdCopy.ToSharedRef());
+		
+		TArray<FUniqueNetIdRef> Players;
+		Players.Add(PlayerIdCopy.ToSharedRef());
+		TriggerOnRegisterPlayersCompleteDelegates(SessionName, Players, true);
+		return true;
+	}
+	
+	TArray<FUniqueNetIdRef> EmptyArray;
+	TriggerOnRegisterPlayersCompleteDelegates(SessionName, EmptyArray, false);
+	return false;
 }
 
 bool FOnlineSessionICE::RegisterPlayers(FName SessionName, const TArray<FUniqueNetIdRef>& Players, bool bWasInvited)
@@ -352,9 +374,38 @@ bool FOnlineSessionICE::RegisterPlayers(FName SessionName, const TArray<FUniqueN
 
 bool FOnlineSessionICE::UnregisterPlayer(FName SessionName, const FUniqueNetId& PlayerId)
 {
-	TArray<FUniqueNetIdRef> Players;
-	Players.Add(PlayerId.AsShared());
-	return UnregisterPlayers(SessionName, Players);
+	UE_LOG(LogOnlineICE, Log, TEXT("UnregisterPlayer: %s"), *SessionName.ToString());
+
+	FNamedOnlineSession* Session = GetNamedSession(SessionName);
+	if (!Session)
+	{
+		TArray<FUniqueNetIdRef> EmptyArray;
+		TriggerOnUnregisterPlayersCompleteDelegates(SessionName, EmptyArray, false);
+		return false;
+	}
+
+	// Find and remove the matching player
+	bool bRemoved = false;
+	for (int32 i = Session->RegisteredPlayers.Num() - 1; i >= 0; --i)
+	{
+		if (*Session->RegisteredPlayers[i] == PlayerId)
+		{
+			TArray<FUniqueNetIdRef> Players;
+			Players.Add(Session->RegisteredPlayers[i]);
+			Session->RegisteredPlayers.RemoveAt(i);
+			TriggerOnUnregisterPlayersCompleteDelegates(SessionName, Players, true);
+			bRemoved = true;
+			break;
+		}
+	}
+
+	if (!bRemoved)
+	{
+		TArray<FUniqueNetIdRef> EmptyArray;
+		TriggerOnUnregisterPlayersCompleteDelegates(SessionName, EmptyArray, false);
+	}
+
+	return bRemoved;
 }
 
 bool FOnlineSessionICE::UnregisterPlayers(FName SessionName, const TArray<FUniqueNetIdRef>& Players)
