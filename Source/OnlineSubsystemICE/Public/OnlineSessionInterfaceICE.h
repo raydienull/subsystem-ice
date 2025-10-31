@@ -58,6 +58,7 @@ public:
 	virtual int32 GetNumSessions() override;
 	virtual void DumpSessionState() override;
 	virtual FNamedOnlineSession* GetNamedSession(FName SessionName) override;
+	virtual const FNamedOnlineSession* GetNamedSession(FName SessionName) const override;
 	virtual void RemoveNamedSession(FName SessionName) override;
 	virtual EOnlineSessionState::Type GetSessionState(FName SessionName) const override;
 	virtual bool HasPresenceSession() override;

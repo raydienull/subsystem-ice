@@ -408,6 +408,11 @@ FNamedOnlineSession* FOnlineSessionICE::GetNamedSession(FName SessionName)
 	return Sessions.Find(SessionName);
 }
 
+const FNamedOnlineSession* FOnlineSessionICE::GetNamedSession(FName SessionName) const
+{
+	return Sessions.Find(SessionName);
+}
+
 void FOnlineSessionICE::RemoveNamedSession(FName SessionName)
 {
 	Sessions.Remove(SessionName);
