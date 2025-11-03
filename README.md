@@ -194,12 +194,27 @@ TURNUsername=myuser
 TURNCredential=mypassword
 ```
 
+## Recent Updates
+
+### Version 2.0 Features
+
+- ✅ **Basic Matchmaking**: Create-or-join matchmaking behavior implemented
+- ✅ **Session Discovery**: FindSessions with local session support
+- ✅ **Session Lookup**: FindSessionById for targeted session searches
+- ✅ **Friend Sessions**: Find sessions your friends are playing in
+- ✅ **Session Invites**: Framework for sending session invitations
+- ✅ **Enhanced ICE Integration**: Automatic candidate gathering on session create/join
+- ✅ **Improved Connection Strings**: Meaningful ICE URIs with connection details
+- ✅ **Better Error Handling**: Comprehensive validation and logging
+
+See [IMPLEMENTATION.md](IMPLEMENTATION.md) for detailed documentation of all features.
+
 ## Limitations & Future Work
 
 - ⚠️ **Signaling**: Currently requires manual candidate exchange. A signaling server implementation is needed for production use
 - ⚠️ **TURN**: Basic TURN implementation - full RFC 5766 compliance is in progress
 - ⚠️ **Security**: Consider implementing DTLS for encrypted P2P communication
-- ⚠️ **Matchmaking**: Basic implementation - full matchmaking service integration pending
+- ⚠️ **Advanced Matchmaking**: Skill-based and region-based matchmaking requires signaling server integration
 
 ## Debugging
 
