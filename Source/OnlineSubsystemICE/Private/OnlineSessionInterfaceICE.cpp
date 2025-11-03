@@ -5,6 +5,26 @@
 #include "OnlineSubsystemUtils.h"
 #include "ICEAgent.h"
 
+namespace
+{
+	// Helper function to convert session state to string
+	const TCHAR* GetSessionStateString(EOnlineSessionState::Type State)
+	{
+		switch (State)
+		{
+			case EOnlineSessionState::NoSession: return TEXT("NoSession");
+			case EOnlineSessionState::Creating: return TEXT("Creating");
+			case EOnlineSessionState::Pending: return TEXT("Pending");
+			case EOnlineSessionState::Starting: return TEXT("Starting");
+			case EOnlineSessionState::InProgress: return TEXT("InProgress");
+			case EOnlineSessionState::Ending: return TEXT("Ending");
+			case EOnlineSessionState::Ended: return TEXT("Ended");
+			case EOnlineSessionState::Destroying: return TEXT("Destroying");
+			default: return TEXT("Unknown");
+		}
+	}
+}
+
 FOnlineSessionICE::FOnlineSessionICE(FOnlineSubsystemICE* InSubsystem)
 	: Subsystem(InSubsystem)
 	, RemotePeerPort(0)
@@ -133,7 +153,7 @@ bool FOnlineSessionICE::UpdateSession(FName SessionName, FOnlineSessionSettings&
 	if (Session->SessionState == EOnlineSessionState::Destroying || Session->SessionState == EOnlineSessionState::Ended)
 	{
 		UE_LOG(LogOnlineICE, Warning, TEXT("Cannot update session '%s': session is in state %s"), 
-			*SessionName.ToString(), EOnlineSessionState::ToString(Session->SessionState));
+			*SessionName.ToString(), GetSessionStateString(Session->SessionState));
 		TriggerOnUpdateSessionCompleteDelegates(SessionName, false);
 		return false;
 	}
@@ -552,6 +572,7 @@ bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const
 	UE_LOG(LogOnlineICE, Log, TEXT("FindFriendSession: Looking for sessions with %d friends"), FriendList.Num());
 
 	TArray<FOnlineSessionSearchResult> Results;
+	TSet<FName> AddedSessionNames; // Track added sessions to avoid duplicates
 
 	// Search for sessions containing any of the friends in the list
 	for (const FUniqueNetIdRef& Friend : FriendList)
@@ -559,19 +580,9 @@ bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const
 		for (const auto& SessionPair : Sessions)
 		{
 			const FNamedOnlineSession& Session = SessionPair.Value;
-			bool bAlreadyAdded = false;
 			
-			// Check if we already added this session
-			for (const FOnlineSessionSearchResult& ExistingResult : Results)
-			{
-				if (ExistingResult.Session.SessionInfo == Session.SessionInfo)
-				{
-					bAlreadyAdded = true;
-					break;
-				}
-			}
-			
-			if (bAlreadyAdded)
+			// Skip if we already added this session
+			if (AddedSessionNames.Contains(SessionPair.Key))
 			{
 				continue;
 			}
@@ -583,6 +594,7 @@ bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const
 				SearchResult.Session = Session;
 				SearchResult.PingInMs = 0;
 				Results.Add(SearchResult);
+				AddedSessionNames.Add(SessionPair.Key);
 				UE_LOG(LogOnlineICE, Log, TEXT("Found friend's session (owner): %s"), *SessionPair.Key.ToString());
 				continue;
 			}
@@ -596,6 +608,7 @@ bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const
 					SearchResult.Session = Session;
 					SearchResult.PingInMs = 0;
 					Results.Add(SearchResult);
+					AddedSessionNames.Add(SessionPair.Key);
 					UE_LOG(LogOnlineICE, Log, TEXT("Found friend's session (player): %s"), *SessionPair.Key.ToString());
 					break;
 				}
@@ -719,9 +732,12 @@ bool FOnlineSessionICE::GetResolvedConnectString(const FOnlineSessionSearchResul
 	{
 		// In a production environment, session info would contain ICE candidates and connection details
 		// For now, construct a basic connection string
-		FString SessionId = SearchResult.Session.SessionInfo->GetSessionId().ToString();
-		ConnectInfo = FString::Printf(TEXT("ice://session/%s"), *SessionId);
-		return true;
+		FUniqueNetIdPtr SessionId = SearchResult.Session.SessionInfo->GetSessionId();
+		if (SessionId.IsValid())
+		{
+			ConnectInfo = FString::Printf(TEXT("ice://session/%s"), *SessionId->ToString());
+			return true;
+		}
 	}
 
 	ConnectInfo = TEXT("ice://pending");
@@ -874,7 +890,7 @@ void FOnlineSessionICE::DumpSessionState()
 	{
 		UE_LOG(LogOnlineICE, Log, TEXT("  Session: %s, State: %s"), 
 			*SessionPair.Key.ToString(), 
-			EOnlineSessionState::ToString(SessionPair.Value.SessionState));
+			GetSessionStateString(SessionPair.Value.SessionState));
 	}
 }
 
