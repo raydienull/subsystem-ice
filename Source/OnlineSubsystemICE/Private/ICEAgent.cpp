@@ -5,6 +5,7 @@
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
+#include "Misc/SecureHash.h"
 
 FString FICECandidate::ToString() const
 {
@@ -403,10 +404,28 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 		return false;
 	}
 
+	// First attempt: Send request without authentication to get realm and nonce
+	// The server will respond with 401 Unauthorized if authentication is required
+	bool bSuccess = PerformTURNAllocationRequest(TURNSocket, TURNAddr, Username, Credential, FString(), FString(), OutRelayIP, OutRelayPort);
+	
+	SocketSubsystem->DestroySocket(TURNSocket);
+	return bSuccess;
+}
+
+bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedPtr<FInternetAddr>& TURNAddr, 
+	const FString& Username, const FString& Credential, const FString& Realm, const FString& Nonce,
+	FString& OutRelayIP, int32& OutRelayPort)
+{
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	if (!SocketSubsystem)
+	{
+		return false;
+	}
+
 	// Build TURN Allocate Request (RFC 5766)
 	// Message format: Type (2) | Length (2) | Magic Cookie (4) | Transaction ID (12) | Attributes
 	TArray<uint8> TURNRequest;
-	TURNRequest.SetNum(256); // Initial size
+	TURNRequest.SetNum(512); // Initial size
 	FMemory::Memzero(TURNRequest.GetData(), TURNRequest.Num());
 
 	int32 Offset = 0;
@@ -426,9 +445,11 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 	TURNRequest[Offset++] = 0x42;
 
 	// Transaction ID: Random 12 bytes
+	uint8 TransactionID[12];
 	for (int32 i = 0; i < 12; i++)
 	{
-		TURNRequest[Offset++] = FMath::Rand() & 0xFF;
+		TransactionID[i] = FMath::Rand() & 0xFF;
+		TURNRequest[Offset++] = TransactionID[i];
 	}
 
 	// Add REQUESTED-TRANSPORT attribute (UDP = 17)
@@ -459,7 +480,79 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 		TURNRequest[Offset++] = 0x00;
 	}
 
-	// Calculate message length (everything after the header)
+	// If we have Realm and Nonce, add authentication attributes
+	if (!Realm.IsEmpty() && !Nonce.IsEmpty())
+	{
+		// Add REALM attribute
+		// Type: 0x0014
+		int32 RealmLen = Realm.Len();
+		TURNRequest[Offset++] = 0x00;
+		TURNRequest[Offset++] = 0x14;
+		TURNRequest[Offset++] = (RealmLen >> 8) & 0xFF;
+		TURNRequest[Offset++] = RealmLen & 0xFF;
+		for (int32 i = 0; i < RealmLen; i++)
+		{
+			TURNRequest[Offset++] = Realm[i];
+		}
+		while (Offset % 4 != 0)
+		{
+			TURNRequest[Offset++] = 0x00;
+		}
+
+		// Add NONCE attribute
+		// Type: 0x0015
+		int32 NonceLen = Nonce.Len();
+		TURNRequest[Offset++] = 0x00;
+		TURNRequest[Offset++] = 0x15;
+		TURNRequest[Offset++] = (NonceLen >> 8) & 0xFF;
+		TURNRequest[Offset++] = NonceLen & 0xFF;
+		for (int32 i = 0; i < NonceLen; i++)
+		{
+			TURNRequest[Offset++] = Nonce[i];
+		}
+		while (Offset % 4 != 0)
+		{
+			TURNRequest[Offset++] = 0x00;
+		}
+
+		// Add MESSAGE-INTEGRITY attribute (20 bytes HMAC-SHA1)
+		// Type: 0x0008, Length: 20
+		// Note: This must be the last attribute before FINGERPRINT (which we don't use)
+		int32 MessageIntegrityOffset = Offset;
+		TURNRequest[Offset++] = 0x00;
+		TURNRequest[Offset++] = 0x08;
+		TURNRequest[Offset++] = 0x00;
+		TURNRequest[Offset++] = 0x14; // Length = 20 bytes
+		
+		// Placeholder for HMAC-SHA1 (will be calculated)
+		for (int32 i = 0; i < 20; i++)
+		{
+			TURNRequest[Offset++] = 0x00;
+		}
+
+		// Calculate message length before MESSAGE-INTEGRITY for the length field
+		int32 MessageLengthForIntegrity = MessageIntegrityOffset - 20 + 24; // +24 for MESSAGE-INTEGRITY attr header and value
+		TURNRequest[LengthOffset] = (MessageLengthForIntegrity >> 8) & 0xFF;
+		TURNRequest[LengthOffset + 1] = MessageLengthForIntegrity & 0xFF;
+
+		// Calculate HMAC-SHA1 for MESSAGE-INTEGRITY
+		// Key = MD5(username:realm:password)
+		FString KeyString = Username + TEXT(":") + Realm + TEXT(":") + Credential;
+		uint8 KeyMD5[16];
+		CalculateMD5(KeyString, KeyMD5);
+
+		// Calculate HMAC-SHA1 over the message (up to but not including MESSAGE-INTEGRITY value)
+		uint8 HMAC[20];
+		CalculateHMACSHA1(TURNRequest.GetData(), MessageIntegrityOffset + 4, KeyMD5, 16, HMAC);
+		
+		// Copy HMAC to MESSAGE-INTEGRITY attribute
+		for (int32 i = 0; i < 20; i++)
+		{
+			TURNRequest[MessageIntegrityOffset + 4 + i] = HMAC[i];
+		}
+	}
+
+	// Calculate final message length (everything after the header)
 	int32 MessageLength = Offset - 20;
 	TURNRequest[LengthOffset] = (MessageLength >> 8) & 0xFF;
 	TURNRequest[LengthOffset + 1] = MessageLength & 0xFF;
@@ -472,7 +565,6 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 	if (!TURNSocket->SendTo(TURNRequest.GetData(), TURNRequest.Num(), BytesSent, *TURNAddr))
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to send TURN Allocate request"));
-		SocketSubsystem->DestroySocket(TURNSocket);
 		return false;
 	}
 
@@ -480,7 +572,6 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 	if (!TURNSocket->Wait(ESocketWaitConditions::WaitForRead, FTimespan::FromSeconds(5.0)))
 	{
 		UE_LOG(LogOnlineICE, Warning, TEXT("TURN Allocate request timeout"));
-		SocketSubsystem->DestroySocket(TURNSocket);
 		return false;
 	}
 
@@ -492,7 +583,6 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 	if (!TURNSocket->RecvFrom(TURNResponse, sizeof(TURNResponse), BytesRead, *FromAddr))
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to receive TURN response"));
-		SocketSubsystem->DestroySocket(TURNSocket);
 		return false;
 	}
 
@@ -500,7 +590,7 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 	if (BytesRead >= 20)
 	{
 		uint16 MessageType = (TURNResponse[0] << 8) | TURNResponse[1];
-		MessageLength = (TURNResponse[2] << 8) | TURNResponse[3];
+		uint16 MessageLength = (TURNResponse[2] << 8) | TURNResponse[3];
 
 		// Check if it's an Allocate Success Response (0x0103)
 		if (MessageType == 0x0103 && BytesRead >= 20 + MessageLength)
@@ -547,8 +637,6 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 							RelayIPValue & 0xFF);
 
 						UE_LOG(LogOnlineICE, Log, TEXT("TURN allocated relay address: %s:%d"), *OutRelayIP, OutRelayPort);
-
-						SocketSubsystem->DestroySocket(TURNSocket);
 						return true;
 					}
 				}
@@ -559,7 +647,79 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 		}
 		else if (MessageType == 0x0113) // Allocate Error Response
 		{
-			UE_LOG(LogOnlineICE, Error, TEXT("TURN Allocate failed - error response received"));
+			// Parse error response to extract error code and authentication info
+			int32 ErrorCode = 0;
+			FString ErrorRealm;
+			FString ErrorNonce;
+			
+			int32 AttrOffset = 20;
+			while (AttrOffset < BytesRead)
+			{
+				if (AttrOffset + 4 > BytesRead) break;
+
+				uint16 AttrType = (TURNResponse[AttrOffset] << 8) | TURNResponse[AttrOffset + 1];
+				uint16 AttrLength = (TURNResponse[AttrOffset + 2] << 8) | TURNResponse[AttrOffset + 3];
+
+				if (AttrOffset + 4 + AttrLength > BytesRead) break;
+
+				// ERROR-CODE attribute (0x0009)
+				if (AttrType == 0x0009 && AttrLength >= 4)
+				{
+					// Error code format: 21 bits reserved, 3 bits class, 8 bits number
+					// We read from offset 6 and 7 (skipping reserved bytes)
+					uint8 ClassByte = TURNResponse[AttrOffset + 6]; // Contains class in lower 3 bits
+					uint8 NumberByte = TURNResponse[AttrOffset + 7];
+					ErrorCode = ((ClassByte & 0x07) * 100) + NumberByte;
+					
+					// Extract error reason phrase if present
+					if (AttrLength > 4)
+					{
+						FString ErrorReason;
+						for (int32 i = 8; i < 4 + AttrLength; i++)
+						{
+							ErrorReason += (char)TURNResponse[AttrOffset + i];
+						}
+						UE_LOG(LogOnlineICE, Warning, TEXT("TURN Error %d: %s"), ErrorCode, *ErrorReason);
+					}
+					else
+					{
+						UE_LOG(LogOnlineICE, Warning, TEXT("TURN Error %d"), ErrorCode);
+					}
+				}
+				// REALM attribute (0x0014)
+				else if (AttrType == 0x0014)
+				{
+					for (int32 i = 0; i < AttrLength; i++)
+					{
+						ErrorRealm += (char)TURNResponse[AttrOffset + 4 + i];
+					}
+				}
+				// NONCE attribute (0x0015)
+				else if (AttrType == 0x0015)
+				{
+					for (int32 i = 0; i < AttrLength; i++)
+					{
+						ErrorNonce += (char)TURNResponse[AttrOffset + 4 + i];
+					}
+				}
+
+				// Move to next attribute (pad to 4-byte boundary)
+				AttrOffset += 4 + ((AttrLength + 3) & ~3);
+			}
+
+			// If error is 401 Unauthorized and we haven't retried yet, retry with authentication
+			if (ErrorCode == 401 && !ErrorRealm.IsEmpty() && !ErrorNonce.IsEmpty() && Realm.IsEmpty())
+			{
+				UE_LOG(LogOnlineICE, Log, TEXT("TURN requires authentication, retrying with credentials"));
+				UE_LOG(LogOnlineICE, Log, TEXT("Realm: %s, Nonce: %s"), *ErrorRealm, *ErrorNonce);
+				
+				// Retry with authentication
+				return PerformTURNAllocationRequest(TURNSocket, TURNAddr, Username, Credential, 
+					ErrorRealm, ErrorNonce, OutRelayIP, OutRelayPort);
+			}
+			
+			UE_LOG(LogOnlineICE, Error, TEXT("TURN Allocate failed - error %d received"), ErrorCode);
+			return false;
 		}
 		else
 		{
@@ -568,7 +728,6 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 	}
 
 	UE_LOG(LogOnlineICE, Warning, TEXT("Failed to parse TURN Allocate response"));
-	SocketSubsystem->DestroySocket(TURNSocket);
 	return false;
 }
 
@@ -738,4 +897,69 @@ void FICEAgent::Close()
 	bIsConnected = false;
 	LocalCandidates.Empty();
 	RemoteCandidates.Empty();
+}
+
+void FICEAgent::CalculateMD5(const FString& Input, uint8* OutHash)
+{
+	// Simple MD5 implementation for TURN authentication
+	// In production, consider using a proper crypto library
+	// For now, use Unreal's built-in MD5 support via FMD5
+	
+	// Convert FString to UTF8
+	FTCHARToUTF8 UTF8String(*Input);
+	
+	// Calculate MD5
+	FMD5 MD5Context;
+	MD5Context.Update((const uint8*)UTF8String.Get(), UTF8String.Length());
+	MD5Context.Final(OutHash);
+}
+
+void FICEAgent::CalculateHMACSHA1(const uint8* Data, int32 DataLen, const uint8* Key, int32 KeyLen, uint8* OutHash)
+{
+	// HMAC-SHA1 implementation as per RFC 2104
+	const int32 BlockSize = 64; // SHA-1 block size
+	const int32 HashSize = 20;  // SHA-1 output size
+	
+	uint8 KeyPadded[BlockSize];
+	FMemory::Memzero(KeyPadded, BlockSize);
+	
+	// If key is longer than block size, hash it first
+	if (KeyLen > BlockSize)
+	{
+		FSHA1 SHA1Context;
+		SHA1Context.Update(Key, KeyLen);
+		SHA1Context.Final();
+		SHA1Context.GetHash(KeyPadded);
+	}
+	else
+	{
+		FMemory::Memcpy(KeyPadded, Key, KeyLen);
+	}
+	
+	// Create inner and outer padded keys
+	uint8 InnerPad[BlockSize];
+	uint8 OuterPad[BlockSize];
+	
+	for (int32 i = 0; i < BlockSize; i++)
+	{
+		InnerPad[i] = KeyPadded[i] ^ 0x36;
+		OuterPad[i] = KeyPadded[i] ^ 0x5C;
+	}
+	
+	// Calculate inner hash: SHA1(InnerPad || Data)
+	FSHA1 InnerSHA1;
+	InnerSHA1.Update(InnerPad, BlockSize);
+	InnerSHA1.Update(Data, DataLen);
+	InnerSHA1.Final();
+	
+	uint8 InnerHash[HashSize];
+	InnerSHA1.GetHash(InnerHash);
+	
+	// Calculate outer hash: SHA1(OuterPad || InnerHash)
+	FSHA1 OuterSHA1;
+	OuterSHA1.Update(OuterPad, BlockSize);
+	OuterSHA1.Update(InnerHash, HashSize);
+	OuterSHA1.Final();
+	
+	OuterSHA1.GetHash(OutHash);
 }
