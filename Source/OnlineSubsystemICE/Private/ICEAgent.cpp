@@ -530,18 +530,20 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 			TURNRequest[Offset++] = 0x00;
 		}
 
-		// Calculate message length before MESSAGE-INTEGRITY for the length field
-		int32 MessageLengthForIntegrity = MessageIntegrityOffset - 20 + 24; // +24 for MESSAGE-INTEGRITY attr header and value
+		// Calculate HMAC-SHA1 for MESSAGE-INTEGRITY
+		// According to RFC 5389 Section 15.4, the length field is adjusted to point to 
+		// the MESSAGE-INTEGRITY attribute itself before calculating HMAC
+		int32 MessageLengthForIntegrity = MessageIntegrityOffset - 20 + 24; // +24 for MESSAGE-INTEGRITY header(4) + value(20)
 		TURNRequest[LengthOffset] = (MessageLengthForIntegrity >> 8) & 0xFF;
 		TURNRequest[LengthOffset + 1] = MessageLengthForIntegrity & 0xFF;
 
-		// Calculate HMAC-SHA1 for MESSAGE-INTEGRITY
-		// Key = MD5(username:realm:password)
+		// Key = MD5(username:realm:password) for long-term credentials
 		FString KeyString = Username + TEXT(":") + Realm + TEXT(":") + Credential;
 		uint8 KeyMD5[16];
 		CalculateMD5(KeyString, KeyMD5);
 
-		// Calculate HMAC-SHA1 over the message (up to but not including MESSAGE-INTEGRITY value)
+		// Calculate HMAC-SHA1 over the message including header with adjusted length,
+		// up to but not including the MESSAGE-INTEGRITY value itself
 		uint8 HMAC[20];
 		CalculateHMACSHA1(TURNRequest.GetData(), MessageIntegrityOffset + 4, KeyMD5, 16, HMAC);
 		
@@ -666,18 +668,18 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 				if (AttrType == 0x0009 && AttrLength >= 4)
 				{
 					// Error code format: 21 bits reserved, 3 bits class, 8 bits number
-					// We read from offset 6 and 7 (skipping reserved bytes)
-					uint8 ClassByte = TURNResponse[AttrOffset + 6]; // Contains class in lower 3 bits
-					uint8 NumberByte = TURNResponse[AttrOffset + 7];
+					// According to RFC 5389, error code is at offset 2-3 within attribute value
+					uint8 ClassByte = TURNResponse[AttrOffset + 4 + 2]; // Contains class in lower 3 bits
+					uint8 NumberByte = TURNResponse[AttrOffset + 4 + 3];
 					ErrorCode = ((ClassByte & 0x07) * 100) + NumberByte;
 					
-					// Extract error reason phrase if present
+					// Extract error reason phrase if present (starts at byte 4 of attribute value)
 					if (AttrLength > 4)
 					{
 						FString ErrorReason;
-						for (int32 i = 8; i < 4 + AttrLength; i++)
+						for (int32 i = 4; i < AttrLength; i++)
 						{
-							ErrorReason += (char)TURNResponse[AttrOffset + i];
+							ErrorReason += (char)TURNResponse[AttrOffset + 4 + i];
 						}
 						UE_LOG(LogOnlineICE, Warning, TEXT("TURN Error %d: %s"), ErrorCode, *ErrorReason);
 					}
