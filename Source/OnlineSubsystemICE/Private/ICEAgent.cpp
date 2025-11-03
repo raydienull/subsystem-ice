@@ -559,12 +559,18 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 		{
 			TURNRequest[MessageIntegrityOffset + 4 + i] = HMAC[i];
 		}
+		
+		// Note: The length field has already been set to MessageLengthForIntegrity for 
+		// MESSAGE-INTEGRITY validation. We must NOT overwrite it, as per RFC 5389 Section 15.4.
 	}
-
-	// Calculate final message length (everything after the header)
-	int32 MessageLength = Offset - 20;
-	TURNRequest[LengthOffset] = (MessageLength >> 8) & 0xFF;
-	TURNRequest[LengthOffset + 1] = MessageLength & 0xFF;
+	else
+	{
+		// Calculate final message length (everything after the header)
+		// Only do this when MESSAGE-INTEGRITY is not present
+		int32 MessageLength = Offset - 20;
+		TURNRequest[LengthOffset] = (MessageLength >> 8) & 0xFF;
+		TURNRequest[LengthOffset + 1] = MessageLength & 0xFF;
+	}
 
 	// Resize to actual size
 	TURNRequest.SetNum(Offset);
