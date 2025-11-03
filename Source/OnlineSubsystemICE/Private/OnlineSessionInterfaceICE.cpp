@@ -59,7 +59,30 @@ bool FOnlineSessionICE::CreateSession(int32 HostingPlayerNum, FName SessionName,
 	NewSession.HostingPlayerNum = HostingPlayerNum;
 	NewSession.SessionState = EOnlineSessionState::Creating;
 
-	// Mark session as pending (in a real implementation, we would gather ICE candidates here)
+	// Gather ICE candidates for this session
+	if (ICEAgent.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Gathering ICE candidates for session '%s'"), *SessionName.ToString());
+		bool bGathered = ICEAgent->GatherCandidates();
+		
+		if (bGathered)
+		{
+			TArray<FICECandidate> LocalCandidates = ICEAgent->GetLocalCandidates();
+			UE_LOG(LogOnlineICE, Log, TEXT("Gathered %d ICE candidates for session"), LocalCandidates.Num());
+			
+			// Log candidates for debugging/manual signaling
+			for (const FICECandidate& Candidate : LocalCandidates)
+			{
+				UE_LOG(LogOnlineICE, Verbose, TEXT("  %s"), *Candidate.ToString());
+			}
+		}
+		else
+		{
+			UE_LOG(LogOnlineICE, Warning, TEXT("Failed to gather ICE candidates for session '%s'"), *SessionName.ToString());
+		}
+	}
+
+	// Mark session as pending
 	Session = GetNamedSession(SessionName);
 	if (Session)
 	{
@@ -95,15 +118,30 @@ bool FOnlineSessionICE::StartSession(FName SessionName)
 
 bool FOnlineSessionICE::UpdateSession(FName SessionName, FOnlineSessionSettings& UpdatedSessionSettings, bool bShouldRefreshOnlineData)
 {
-	UE_LOG(LogOnlineICE, Log, TEXT("UpdateSession: %s"), *SessionName.ToString());
+	UE_LOG(LogOnlineICE, Log, TEXT("UpdateSession: %s (RefreshOnlineData: %s)"), 
+		*SessionName.ToString(), bShouldRefreshOnlineData ? TEXT("true") : TEXT("false"));
 
 	FNamedOnlineSession* Session = GetNamedSession(SessionName);
 	if (!Session)
 	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Cannot update session '%s': session not found"), *SessionName.ToString());
+		TriggerOnUpdateSessionCompleteDelegates(SessionName, false);
 		return false;
 	}
 
+	// Validate session state for updates
+	if (Session->SessionState == EOnlineSessionState::Destroying || Session->SessionState == EOnlineSessionState::Ended)
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Cannot update session '%s': session is in state %s"), 
+			*SessionName.ToString(), EOnlineSessionState::ToString(Session->SessionState));
+		TriggerOnUpdateSessionCompleteDelegates(SessionName, false);
+		return false;
+	}
+
+	// Update session settings
 	Session->SessionSettings = UpdatedSessionSettings;
+	
+	UE_LOG(LogOnlineICE, Log, TEXT("Session '%s' updated successfully"), *SessionName.ToString());
 	TriggerOnUpdateSessionCompleteDelegates(SessionName, true);
 	return true;
 }
@@ -418,7 +456,36 @@ bool FOnlineSessionICE::JoinSession(int32 PlayerNum, FName SessionName, const FO
 	NewSession.HostingPlayerNum = PlayerNum;
 	NewSession.SessionState = EOnlineSessionState::Pending;
 
-	// In a real implementation, we would initiate ICE connection here
+	// Gather local ICE candidates for connection
+	if (ICEAgent.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Gathering ICE candidates for joining session '%s'"), *SessionName.ToString());
+		bool bGathered = ICEAgent->GatherCandidates();
+		
+		if (bGathered)
+		{
+			TArray<FICECandidate> LocalCandidates = ICEAgent->GetLocalCandidates();
+			UE_LOG(LogOnlineICE, Log, TEXT("Gathered %d ICE candidates for joining"), LocalCandidates.Num());
+			
+			// In a production environment, these candidates would be sent to the host
+			// via a signaling server. For now, log them for manual exchange
+			for (const FICECandidate& Candidate : LocalCandidates)
+			{
+				UE_LOG(LogOnlineICE, Verbose, TEXT("  %s"), *Candidate.ToString());
+			}
+		}
+		else
+		{
+			UE_LOG(LogOnlineICE, Warning, TEXT("Failed to gather ICE candidates for joining session '%s'"), *SessionName.ToString());
+		}
+		
+		// Note: In a real implementation, we would:
+		// 1. Send our ICE candidates to the session host via signaling server
+		// 2. Receive the host's ICE candidates
+		// 3. Start ICE connectivity checks
+		// 4. Wait for connection establishment before triggering success
+	}
+
 	TriggerOnJoinSessionCompleteDelegates(SessionName, EOnJoinSessionCompleteResult::Success);
 	return true;
 }
@@ -625,13 +692,38 @@ bool FOnlineSessionICE::GetResolvedConnectString(FName SessionName, FString& Con
 		return false;
 	}
 
-	// In a real implementation, this would return the ICE connection string
-	ConnectInfo = TEXT("ice://pending");
+	// Build connection string with ICE information
+	if (ICEAgent.IsValid() && ICEAgent->IsConnected())
+	{
+		// If ICE is connected, provide connection details
+		TArray<FICECandidate> LocalCandidates = ICEAgent->GetLocalCandidates();
+		if (LocalCandidates.Num() > 0)
+		{
+			// Use the first candidate for the connection string
+			const FICECandidate& Candidate = LocalCandidates[0];
+			ConnectInfo = FString::Printf(TEXT("ice://%s:%d"), *Candidate.Address, Candidate.Port);
+			UE_LOG(LogOnlineICE, Verbose, TEXT("Connect string for session '%s': %s"), *SessionName.ToString(), *ConnectInfo);
+			return true;
+		}
+	}
+
+	// If ICE not connected or no candidates, provide a pending status
+	ConnectInfo = FString::Printf(TEXT("ice://pending/%s"), *SessionName.ToString());
 	return true;
 }
 
 bool FOnlineSessionICE::GetResolvedConnectString(const FOnlineSessionSearchResult& SearchResult, FName PortType, FString& ConnectInfo)
 {
+	// Try to extract connection information from the search result
+	if (SearchResult.Session.SessionInfo.IsValid())
+	{
+		// In a production environment, session info would contain ICE candidates and connection details
+		// For now, construct a basic connection string
+		FString SessionId = SearchResult.Session.SessionInfo->GetSessionId().ToString();
+		ConnectInfo = FString::Printf(TEXT("ice://session/%s"), *SessionId);
+		return true;
+	}
+
 	ConnectInfo = TEXT("ice://pending");
 	return true;
 }
