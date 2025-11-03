@@ -7,6 +7,17 @@
 #include "IPAddress.h"
 #include "Misc/SecureHash.h"
 
+// STUN/TURN protocol constants (RFC 5389/5766)
+namespace STUNConstants
+{
+	constexpr int32 TRANSACTION_ID_LENGTH = 12;
+	constexpr int32 MESSAGE_INTEGRITY_ATTR_SIZE = 24; // Header(4) + HMAC-SHA1(20)
+	constexpr int32 HMAC_SHA1_SIZE = 20;
+	constexpr uint8 ERROR_CLASS_MASK = 0x07;
+	constexpr int32 ERROR_CLASS_MULTIPLIER = 100;
+	constexpr int32 SHA1_BLOCK_SIZE = 64;
+}
+
 FString FICECandidate::ToString() const
 {
 	return FString::Printf(TEXT("candidate:%s %d %s %d %s %d typ %s"),
@@ -416,16 +427,12 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 	const FString& Username, const FString& Credential, const FString& Realm, const FString& Nonce,
 	FString& OutRelayIP, int32& OutRelayPort, bool bIsRetry)
 {
-	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
-	if (!SocketSubsystem)
-	{
-		return false;
-	}
-
 	// Build TURN Allocate Request (RFC 5766)
 	// Message format: Type (2) | Length (2) | Magic Cookie (4) | Transaction ID (12) | Attributes
 	TArray<uint8> TURNRequest;
-	TURNRequest.SetNum(512); // Initial size
+	// 512 bytes to accommodate header(20) + REQUESTED-TRANSPORT(8) + USERNAME(variable) + 
+	// REALM(variable) + NONCE(variable) + MESSAGE-INTEGRITY(24) with padding
+	TURNRequest.SetNum(512);
 	FMemory::Memzero(TURNRequest.GetData(), TURNRequest.Num());
 
 	int32 Offset = 0;
@@ -444,9 +451,9 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 	TURNRequest[Offset++] = 0xA4;
 	TURNRequest[Offset++] = 0x42;
 
-	// Transaction ID: Random 12 bytes
-	uint8 TransactionID[12];
-	for (int32 i = 0; i < 12; i++)
+	// Transaction ID: Random bytes (RFC 5389)
+	uint8 TransactionID[STUNConstants::TRANSACTION_ID_LENGTH];
+	for (int32 i = 0; i < STUNConstants::TRANSACTION_ID_LENGTH; i++)
 	{
 		TransactionID[i] = FMath::Rand() & 0xFF;
 		TURNRequest[Offset++] = TransactionID[i];
@@ -533,7 +540,7 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 		// Calculate HMAC-SHA1 for MESSAGE-INTEGRITY
 		// According to RFC 5389 Section 15.4, the length field is adjusted to point to 
 		// the MESSAGE-INTEGRITY attribute itself before calculating HMAC
-		int32 MessageLengthForIntegrity = MessageIntegrityOffset - 20 + 24; // +24 for MESSAGE-INTEGRITY header(4) + value(20)
+		int32 MessageLengthForIntegrity = MessageIntegrityOffset - 20 + STUNConstants::MESSAGE_INTEGRITY_ATTR_SIZE;
 		TURNRequest[LengthOffset] = (MessageLengthForIntegrity >> 8) & 0xFF;
 		TURNRequest[LengthOffset + 1] = MessageLengthForIntegrity & 0xFF;
 
@@ -580,6 +587,12 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 	// Receive TURN response
 	uint8 TURNResponse[1024];
 	int32 BytesRead = 0;
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	if (!SocketSubsystem)
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to get socket subsystem"));
+		return false;
+	}
 	TSharedRef<FInternetAddr> FromAddr = SocketSubsystem->CreateInternetAddr();
 
 	if (!TURNSocket->RecvFrom(TURNResponse, sizeof(TURNResponse), BytesRead, *FromAddr))
@@ -667,11 +680,11 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 				// ERROR-CODE attribute (0x0009)
 				if (AttrType == 0x0009 && AttrLength >= 4)
 				{
-					// Error code format: 21 bits reserved, 3 bits class, 8 bits number
-					// According to RFC 5389, error code is at offset 2-3 within attribute value
+					// Error code format: 21 bits reserved, 3 bits class, 8 bits number (RFC 5389)
+					// Error code is at offset 2-3 within attribute value
 					uint8 ClassByte = TURNResponse[AttrOffset + 4 + 2]; // Contains class in lower 3 bits
 					uint8 NumberByte = TURNResponse[AttrOffset + 4 + 3];
-					ErrorCode = ((ClassByte & 0x07) * 100) + NumberByte;
+					ErrorCode = ((ClassByte & STUNConstants::ERROR_CLASS_MASK) * STUNConstants::ERROR_CLASS_MULTIPLIER) + NumberByte;
 					
 					// Extract error reason phrase if present (starts at byte 4 of attribute value)
 					if (AttrLength > 4)
@@ -918,8 +931,8 @@ void FICEAgent::CalculateMD5(const FString& Input, uint8* OutHash)
 void FICEAgent::CalculateHMACSHA1(const uint8* Data, int32 DataLen, const uint8* Key, int32 KeyLen, uint8* OutHash)
 {
 	// HMAC-SHA1 implementation as per RFC 2104
-	const int32 BlockSize = 64; // SHA-1 block size
-	const int32 HashSize = 20;  // SHA-1 output size
+	const int32 BlockSize = STUNConstants::SHA1_BLOCK_SIZE;
+	const int32 HashSize = STUNConstants::HMAC_SHA1_SIZE;
 	
 	uint8 KeyPadded[BlockSize];
 	FMemory::Memzero(KeyPadded, BlockSize);
