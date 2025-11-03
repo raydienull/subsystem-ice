@@ -162,16 +162,113 @@ bool FOnlineSessionICE::IsPlayerInSession(FName SessionName, const FUniqueNetId&
 
 bool FOnlineSessionICE::StartMatchmaking(const TArray<FUniqueNetIdRef>& LocalPlayers, FName SessionName, const FOnlineSessionSettings& NewSessionSettings, TSharedRef<FOnlineSessionSearch>& SearchSettings)
 {
-	UE_LOG(LogOnlineICE, Warning, TEXT("StartMatchmaking not implemented yet"));
-	TriggerOnMatchmakingCompleteDelegates(SessionName, false);
-	return false;
+	UE_LOG(LogOnlineICE, Log, TEXT("StartMatchmaking: %s with %d players"), *SessionName.ToString(), LocalPlayers.Num());
+
+	// Validate inputs
+	if (LocalPlayers.Num() == 0)
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("StartMatchmaking: No local players provided"));
+		TriggerOnMatchmakingCompleteDelegates(SessionName, false);
+		return false;
+	}
+
+	// Check if session already exists
+	FNamedOnlineSession* ExistingSession = GetNamedSession(SessionName);
+	if (ExistingSession)
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("StartMatchmaking: Session '%s' already exists"), *SessionName.ToString());
+		TriggerOnMatchmakingCompleteDelegates(SessionName, false);
+		return false;
+	}
+
+	// Store search settings for potential match finding
+	CurrentSessionSearch = SearchSettings;
+	SearchSettings->SearchState = EOnlineAsyncTaskState::InProgress;
+
+	// Basic matchmaking: First try to find an existing session
+	// In a real implementation, this would query a matchmaking service
+	// For now, we'll simulate a simple "create or join" behavior
+	
+	// Simulate finding sessions (would query signaling server in production)
+	SearchSettings->SearchResults.Empty();
+	SearchSettings->SearchState = EOnlineAsyncTaskState::Done;
+
+	// If no sessions found, create a new one
+	if (SearchSettings->SearchResults.Num() == 0)
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("No existing sessions found, creating new session for matchmaking"));
+		
+		// Create a new session for matchmaking
+		bool bCreated = CreateSession(*LocalPlayers[0], SessionName, NewSessionSettings);
+		
+		if (bCreated)
+		{
+			// Register all local players
+			FNamedOnlineSession* NewSession = GetNamedSession(SessionName);
+			if (NewSession)
+			{
+				for (const FUniqueNetIdRef& PlayerId : LocalPlayers)
+				{
+					NewSession->RegisteredPlayers.AddUnique(PlayerId);
+				}
+			}
+			
+			UE_LOG(LogOnlineICE, Log, TEXT("Matchmaking session created successfully"));
+			TriggerOnMatchmakingCompleteDelegates(SessionName, true);
+			return true;
+		}
+		else
+		{
+			UE_LOG(LogOnlineICE, Warning, TEXT("Failed to create session for matchmaking"));
+			TriggerOnMatchmakingCompleteDelegates(SessionName, false);
+			return false;
+		}
+	}
+	else
+	{
+		// Join the first available session
+		UE_LOG(LogOnlineICE, Log, TEXT("Found existing session, attempting to join"));
+		bool bJoined = JoinSession(*LocalPlayers[0], SessionName, SearchSettings->SearchResults[0]);
+		
+		if (bJoined)
+		{
+			// Register all local players
+			FNamedOnlineSession* JoinedSession = GetNamedSession(SessionName);
+			if (JoinedSession)
+			{
+				for (const FUniqueNetIdRef& PlayerId : LocalPlayers)
+				{
+					JoinedSession->RegisteredPlayers.AddUnique(PlayerId);
+				}
+			}
+		}
+		
+		TriggerOnMatchmakingCompleteDelegates(SessionName, bJoined);
+		return bJoined;
+	}
 }
 
 bool FOnlineSessionICE::CancelMatchmaking(int32 SearchingPlayerNum, FName SessionName)
 {
-	UE_LOG(LogOnlineICE, Warning, TEXT("CancelMatchmaking not implemented yet"));
-	TriggerOnCancelMatchmakingCompleteDelegates(SessionName, false);
-	return false;
+	UE_LOG(LogOnlineICE, Log, TEXT("CancelMatchmaking: %s"), *SessionName.ToString());
+
+	// Cancel any ongoing search
+	if (CurrentSessionSearch.IsValid() && CurrentSessionSearch->SearchState == EOnlineAsyncTaskState::InProgress)
+	{
+		CurrentSessionSearch->SearchState = EOnlineAsyncTaskState::Failed;
+		CurrentSessionSearch = nullptr;
+	}
+
+	// If a session was created during matchmaking but not started, destroy it
+	FNamedOnlineSession* Session = GetNamedSession(SessionName);
+	if (Session && (Session->SessionState == EOnlineSessionState::Creating || Session->SessionState == EOnlineSessionState::Pending))
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Destroying pending matchmaking session"));
+		DestroySession(SessionName);
+	}
+
+	TriggerOnCancelMatchmakingCompleteDelegates(SessionName, true);
+	return true;
 }
 
 bool FOnlineSessionICE::CancelMatchmaking(const FUniqueNetId& SearchingPlayerId, FName SessionName)
@@ -181,14 +278,54 @@ bool FOnlineSessionICE::CancelMatchmaking(const FUniqueNetId& SearchingPlayerId,
 
 bool FOnlineSessionICE::FindSessions(int32 SearchingPlayerNum, const TSharedRef<FOnlineSessionSearch>& SearchSettings)
 {
-	UE_LOG(LogOnlineICE, Log, TEXT("FindSessions"));
+	UE_LOG(LogOnlineICE, Log, TEXT("FindSessions for player %d"), SearchingPlayerNum);
 
 	CurrentSessionSearch = SearchSettings;
 	SearchSettings->SearchState = EOnlineAsyncTaskState::InProgress;
 
-	// In a real implementation, we would query a signaling server here
-	// For now, just mark as done with no results
+	// Clear previous results
+	SearchSettings->SearchResults.Empty();
+
+	// In a production environment, this would query a signaling/matchmaking server
+	// For local/testing purposes, we can return local sessions that are advertised
+	// This allows for basic testing of the session system
+	
+	int32 ResultsFound = 0;
+	
+	// Check all local sessions that are advertised and in the right state
+	for (const auto& SessionPair : Sessions)
+	{
+		const FNamedOnlineSession& Session = SessionPair.Value;
+		
+		// Only include sessions that should be advertised and are in progress or pending
+		if (Session.SessionSettings.bShouldAdvertise && 
+		    (Session.SessionState == EOnlineSessionState::InProgress || Session.SessionState == EOnlineSessionState::Pending))
+		{
+			// Check if session meets search criteria
+			bool bMatchesCriteria = true;
+			
+			// Apply max search results limit
+			if (SearchSettings->MaxSearchResults > 0 && ResultsFound >= SearchSettings->MaxSearchResults)
+			{
+				break;
+			}
+			
+			// Create a search result for this session
+			FOnlineSessionSearchResult SearchResult;
+			SearchResult.Session = Session;
+			SearchResult.PingInMs = 0; // Local session, no ping
+			
+			SearchSettings->SearchResults.Add(SearchResult);
+			ResultsFound++;
+			
+			UE_LOG(LogOnlineICE, Log, TEXT("Found session: %s"), *SessionPair.Key.ToString());
+		}
+	}
+
+	// Mark search as complete
 	SearchSettings->SearchState = EOnlineAsyncTaskState::Done;
+	
+	UE_LOG(LogOnlineICE, Log, TEXT("FindSessions completed: %d results found"), ResultsFound);
 	TriggerOnFindSessionsCompleteDelegates(true);
 	return true;
 }
@@ -200,9 +337,49 @@ bool FOnlineSessionICE::FindSessions(const FUniqueNetId& SearchingPlayerId, cons
 
 bool FOnlineSessionICE::FindSessionById(const FUniqueNetId& SearchingUserId, const FUniqueNetId& SessionId, const FUniqueNetId& FriendId, const FOnSingleSessionResultCompleteDelegate& CompletionDelegate)
 {
-	UE_LOG(LogOnlineICE, Warning, TEXT("FindSessionById not implemented yet"));
-	CompletionDelegate.ExecuteIfBound(0, false, FOnlineSessionSearchResult());
-	return false;
+	UE_LOG(LogOnlineICE, Log, TEXT("FindSessionById: %s"), *SessionId.ToString());
+
+	// In a production environment, this would query a signaling/matchmaking server by session ID
+	// For local testing, we'll search through our local sessions
+	
+	FOnlineSessionSearchResult SearchResult;
+	bool bFound = false;
+
+	// Search through local sessions for a matching session ID
+	for (const auto& SessionPair : Sessions)
+	{
+		const FNamedOnlineSession& Session = SessionPair.Value;
+		
+		// Check if this session's owner ID matches the session ID we're looking for
+		if (Session.OwningUserId.IsValid() && *Session.OwningUserId == SessionId)
+		{
+			SearchResult.Session = Session;
+			SearchResult.PingInMs = 0; // Local session
+			bFound = true;
+			UE_LOG(LogOnlineICE, Log, TEXT("Found session by ID: %s"), *SessionPair.Key.ToString());
+			break;
+		}
+		
+		// Also check if the session name converted to a unique ID matches
+		FUniqueNetIdPtr SessionIdFromName = CreateSessionIdFromString(SessionPair.Key.ToString());
+		if (SessionIdFromName.IsValid() && *SessionIdFromName == SessionId)
+		{
+			SearchResult.Session = Session;
+			SearchResult.PingInMs = 0;
+			bFound = true;
+			UE_LOG(LogOnlineICE, Log, TEXT("Found session by name-derived ID: %s"), *SessionPair.Key.ToString());
+			break;
+		}
+	}
+
+	if (!bFound)
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Session not found by ID: %s"), *SessionId.ToString());
+	}
+
+	// Execute completion delegate
+	CompletionDelegate.ExecuteIfBound(0, bFound, SearchResult);
+	return true;
 }
 
 bool FOnlineSessionICE::CancelFindSessions()
@@ -253,29 +430,147 @@ bool FOnlineSessionICE::JoinSession(const FUniqueNetId& PlayerId, FName SessionN
 
 bool FOnlineSessionICE::FindFriendSession(int32 LocalUserNum, const FUniqueNetId& Friend)
 {
-	UE_LOG(LogOnlineICE, Warning, TEXT("FindFriendSession not implemented yet"));
-	TriggerOnFindFriendSessionCompleteDelegates(LocalUserNum, false, TArray<FOnlineSessionSearchResult>());
-	return false;
+	UE_LOG(LogOnlineICE, Log, TEXT("FindFriendSession: Looking for sessions with friend %s"), *Friend.ToString());
+
+	TArray<FOnlineSessionSearchResult> Results;
+
+	// In a production environment, this would query a signaling server for friend's sessions
+	// For local testing, search through local sessions to find ones the friend is in
+	
+	for (const auto& SessionPair : Sessions)
+	{
+		const FNamedOnlineSession& Session = SessionPair.Value;
+		
+		// Check if the friend is the owner of this session
+		if (Session.OwningUserId.IsValid() && *Session.OwningUserId == Friend)
+		{
+			FOnlineSessionSearchResult SearchResult;
+			SearchResult.Session = Session;
+			SearchResult.PingInMs = 0;
+			Results.Add(SearchResult);
+			UE_LOG(LogOnlineICE, Log, TEXT("Found friend's session (owner): %s"), *SessionPair.Key.ToString());
+			continue;
+		}
+		
+		// Check if the friend is a registered player in this session
+		for (const FUniqueNetIdRef& PlayerId : Session.RegisteredPlayers)
+		{
+			if (*PlayerId == Friend)
+			{
+				FOnlineSessionSearchResult SearchResult;
+				SearchResult.Session = Session;
+				SearchResult.PingInMs = 0;
+				Results.Add(SearchResult);
+				UE_LOG(LogOnlineICE, Log, TEXT("Found friend's session (player): %s"), *SessionPair.Key.ToString());
+				break;
+			}
+		}
+	}
+
+	bool bSuccess = Results.Num() > 0;
+	UE_LOG(LogOnlineICE, Log, TEXT("FindFriendSession completed: %d sessions found"), Results.Num());
+	
+	TriggerOnFindFriendSessionCompleteDelegates(LocalUserNum, bSuccess, Results);
+	return true;
 }
 
 bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const FUniqueNetId& Friend)
 {
-	UE_LOG(LogOnlineICE, Warning, TEXT("FindFriendSession not implemented yet"));
-	TriggerOnFindFriendSessionCompleteDelegates(0, false, TArray<FOnlineSessionSearchResult>());
-	return false;
+	// Delegate to the int32 version with default user num
+	return FindFriendSession(0, Friend);
 }
 
 bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const TArray<FUniqueNetIdRef>& FriendList)
 {
-	UE_LOG(LogOnlineICE, Warning, TEXT("FindFriendSession not implemented yet"));
-	TriggerOnFindFriendSessionCompleteDelegates(0, false, TArray<FOnlineSessionSearchResult>());
-	return false;
+	UE_LOG(LogOnlineICE, Log, TEXT("FindFriendSession: Looking for sessions with %d friends"), FriendList.Num());
+
+	TArray<FOnlineSessionSearchResult> Results;
+
+	// Search for sessions containing any of the friends in the list
+	for (const FUniqueNetIdRef& Friend : FriendList)
+	{
+		for (const auto& SessionPair : Sessions)
+		{
+			const FNamedOnlineSession& Session = SessionPair.Value;
+			bool bAlreadyAdded = false;
+			
+			// Check if we already added this session
+			for (const FOnlineSessionSearchResult& ExistingResult : Results)
+			{
+				if (ExistingResult.Session.SessionInfo == Session.SessionInfo)
+				{
+					bAlreadyAdded = true;
+					break;
+				}
+			}
+			
+			if (bAlreadyAdded)
+			{
+				continue;
+			}
+			
+			// Check if this friend is the owner
+			if (Session.OwningUserId.IsValid() && *Session.OwningUserId == *Friend)
+			{
+				FOnlineSessionSearchResult SearchResult;
+				SearchResult.Session = Session;
+				SearchResult.PingInMs = 0;
+				Results.Add(SearchResult);
+				UE_LOG(LogOnlineICE, Log, TEXT("Found friend's session (owner): %s"), *SessionPair.Key.ToString());
+				continue;
+			}
+			
+			// Check if this friend is a registered player
+			for (const FUniqueNetIdRef& PlayerId : Session.RegisteredPlayers)
+			{
+				if (*PlayerId == *Friend)
+				{
+					FOnlineSessionSearchResult SearchResult;
+					SearchResult.Session = Session;
+					SearchResult.PingInMs = 0;
+					Results.Add(SearchResult);
+					UE_LOG(LogOnlineICE, Log, TEXT("Found friend's session (player): %s"), *SessionPair.Key.ToString());
+					break;
+				}
+			}
+		}
+	}
+
+	bool bSuccess = Results.Num() > 0;
+	UE_LOG(LogOnlineICE, Log, TEXT("FindFriendSession completed: %d sessions found"), Results.Num());
+	
+	TriggerOnFindFriendSessionCompleteDelegates(0, bSuccess, Results);
+	return true;
 }
 
 bool FOnlineSessionICE::SendSessionInviteToFriend(int32 LocalUserNum, FName SessionName, const FUniqueNetId& Friend)
 {
-	UE_LOG(LogOnlineICE, Warning, TEXT("SendSessionInviteToFriend not implemented yet"));
-	return false;
+	UE_LOG(LogOnlineICE, Log, TEXT("SendSessionInviteToFriend: Session '%s' to friend %s"), *SessionName.ToString(), *Friend.ToString());
+
+	// Verify session exists
+	FNamedOnlineSession* Session = GetNamedSession(SessionName);
+	if (!Session)
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Cannot send invite: Session '%s' not found"), *SessionName.ToString());
+		return false;
+	}
+
+	// In a production environment, this would:
+	// 1. Send the invite through a signaling/messaging service
+	// 2. The friend would receive a notification
+	// 3. The friend could then join using the session information
+	
+	// For local/testing purposes, we'll just log the invite
+	// A real implementation would integrate with a messaging system or signaling server
+	UE_LOG(LogOnlineICE, Log, TEXT("Session invite sent (local simulation) - Session: %s, Friend: %s"), 
+		*SessionName.ToString(), *Friend.ToString());
+	
+	// In a real system, you would:
+	// - Generate session connection info (ICE candidates, session ID)
+	// - Send this info to the friend through your signaling mechanism
+	// - The friend would use this to join the session
+	
+	return true;
 }
 
 bool FOnlineSessionICE::SendSessionInviteToFriend(const FUniqueNetId& LocalUserId, FName SessionName, const FUniqueNetId& Friend)
@@ -285,8 +580,36 @@ bool FOnlineSessionICE::SendSessionInviteToFriend(const FUniqueNetId& LocalUserI
 
 bool FOnlineSessionICE::SendSessionInviteToFriends(int32 LocalUserNum, FName SessionName, const TArray<FUniqueNetIdRef>& Friends)
 {
-	UE_LOG(LogOnlineICE, Warning, TEXT("SendSessionInviteToFriends not implemented yet"));
-	return false;
+	UE_LOG(LogOnlineICE, Log, TEXT("SendSessionInviteToFriends: Session '%s' to %d friends"), *SessionName.ToString(), Friends.Num());
+
+	// Verify session exists
+	FNamedOnlineSession* Session = GetNamedSession(SessionName);
+	if (!Session)
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Cannot send invites: Session '%s' not found"), *SessionName.ToString());
+		return false;
+	}
+
+	if (Friends.Num() == 0)
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("No friends specified for invite"));
+		return false;
+	}
+
+	// Send invite to each friend
+	bool bAllSucceeded = true;
+	for (const FUniqueNetIdRef& Friend : Friends)
+	{
+		bool bSent = SendSessionInviteToFriend(LocalUserNum, SessionName, *Friend);
+		if (!bSent)
+		{
+			bAllSucceeded = false;
+			UE_LOG(LogOnlineICE, Warning, TEXT("Failed to send invite to friend: %s"), *Friend->ToString());
+		}
+	}
+
+	UE_LOG(LogOnlineICE, Log, TEXT("Session invites sent to %d friends"), Friends.Num());
+	return bAllSucceeded;
 }
 
 bool FOnlineSessionICE::SendSessionInviteToFriends(const FUniqueNetId& LocalUserId, FName SessionName, const TArray<FUniqueNetIdRef>& Friends)
