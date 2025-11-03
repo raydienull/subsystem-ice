@@ -188,9 +188,10 @@ LogTemp: Session created successfully!
 
 ## Next Steps
 
-- Read [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md) for detailed examples
-- Configure TURN server for production: [TURN_SETUP.md](TURN_SETUP.md)
-- Learn troubleshooting: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+- Read [IMPLEMENTATION.md](IMPLEMENTATION.md) for complete feature documentation
+- See [TESTING_GUIDE.md](TESTING_GUIDE.md) for testing workflows
+- Learn about new matchmaking features in IMPLEMENTATION.md
+- Understand session lifecycle and ICE integration
 
 ## Minimal Complete Example
 
