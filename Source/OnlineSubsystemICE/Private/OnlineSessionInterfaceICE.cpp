@@ -732,10 +732,10 @@ bool FOnlineSessionICE::GetResolvedConnectString(const FOnlineSessionSearchResul
 	{
 		// In a production environment, session info would contain ICE candidates and connection details
 		// For now, construct a basic connection string
-		FUniqueNetIdPtr SessionId = SearchResult.Session.SessionInfo->GetSessionId();
+		const FUniqueNetId& SessionId = SearchResult.Session.SessionInfo->GetSessionId();
 		if (SessionId.IsValid())
 		{
-			ConnectInfo = FString::Printf(TEXT("ice://session/%s"), *SessionId->ToString());
+			ConnectInfo = FString::Printf(TEXT("ice://session/%s"), *SessionId.ToString());
 			return true;
 		}
 	}

@@ -611,7 +611,7 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 	if (BytesRead >= 20)
 	{
 		uint16 MessageType = (TURNResponse[0] << 8) | TURNResponse[1];
-		MessageLength = (TURNResponse[2] << 8) | TURNResponse[3];
+		uint16 MessageLength = (TURNResponse[2] << 8) | TURNResponse[3];
 
 		// Check if it's an Allocate Success Response (0x0103)
 		if (MessageType == 0x0103 && BytesRead >= 20 + MessageLength)
