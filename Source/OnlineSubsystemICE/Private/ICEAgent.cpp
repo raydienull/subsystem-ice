@@ -406,7 +406,7 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 
 	// First attempt: Send request without authentication to get realm and nonce
 	// The server will respond with 401 Unauthorized if authentication is required
-	bool bSuccess = PerformTURNAllocationRequest(TURNSocket, TURNAddr, Username, Credential, FString(), FString(), OutRelayIP, OutRelayPort);
+	bool bSuccess = PerformTURNAllocationRequest(TURNSocket, TURNAddr, Username, Credential, FString(), FString(), OutRelayIP, OutRelayPort, false);
 	
 	SocketSubsystem->DestroySocket(TURNSocket);
 	return bSuccess;
@@ -414,7 +414,7 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 
 bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedPtr<FInternetAddr>& TURNAddr, 
 	const FString& Username, const FString& Credential, const FString& Realm, const FString& Nonce,
-	FString& OutRelayIP, int32& OutRelayPort)
+	FString& OutRelayIP, int32& OutRelayPort, bool bIsRetry)
 {
 	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
 	if (!SocketSubsystem)
@@ -710,14 +710,14 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 			}
 
 			// If error is 401 Unauthorized and we haven't retried yet, retry with authentication
-			if (ErrorCode == 401 && !ErrorRealm.IsEmpty() && !ErrorNonce.IsEmpty() && Realm.IsEmpty())
+			if (ErrorCode == 401 && !ErrorRealm.IsEmpty() && !ErrorNonce.IsEmpty() && !bIsRetry)
 			{
 				UE_LOG(LogOnlineICE, Log, TEXT("TURN requires authentication, retrying with credentials"));
 				UE_LOG(LogOnlineICE, Log, TEXT("Realm: %s, Nonce: %s"), *ErrorRealm, *ErrorNonce);
 				
-				// Retry with authentication
+				// Retry with authentication (set bIsRetry to true to prevent infinite loops)
 				return PerformTURNAllocationRequest(TURNSocket, TURNAddr, Username, Credential, 
-					ErrorRealm, ErrorNonce, OutRelayIP, OutRelayPort);
+					ErrorRealm, ErrorNonce, OutRelayIP, OutRelayPort, true);
 			}
 			
 			UE_LOG(LogOnlineICE, Error, TEXT("TURN Allocate failed - error %d received"), ErrorCode);
@@ -903,14 +903,13 @@ void FICEAgent::Close()
 
 void FICEAgent::CalculateMD5(const FString& Input, uint8* OutHash)
 {
-	// Simple MD5 implementation for TURN authentication
-	// In production, consider using a proper crypto library
-	// For now, use Unreal's built-in MD5 support via FMD5
+	// Calculate MD5 hash for TURN authentication using Unreal's built-in FMD5
+	// This is used to create the key for HMAC-SHA1: MD5(username:realm:password)
 	
 	// Convert FString to UTF8
 	FTCHARToUTF8 UTF8String(*Input);
 	
-	// Calculate MD5
+	// Calculate MD5 using Unreal's secure hash implementation
 	FMD5 MD5Context;
 	MD5Context.Update((const uint8*)UTF8String.Get(), UTF8String.Length());
 	MD5Context.Final(OutHash);

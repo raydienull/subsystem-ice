@@ -154,7 +154,7 @@ private:
 	/** Perform TURN allocation request with optional authentication */
 	bool PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedPtr<FInternetAddr>& TURNAddr, 
 		const FString& Username, const FString& Credential, const FString& Realm, const FString& Nonce,
-		FString& OutRelayIP, int32& OutRelayPort);
+		FString& OutRelayIP, int32& OutRelayPort, bool bIsRetry = false);
 
 	/** Calculate candidate priority */
 	int32 CalculatePriority(EICECandidateType Type, int32 LocalPreference, int32 ComponentId);
