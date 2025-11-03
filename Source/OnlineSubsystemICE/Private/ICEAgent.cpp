@@ -560,8 +560,8 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 			TURNRequest[MessageIntegrityOffset + 4 + i] = HMAC[i];
 		}
 		
-		// Note: The length field has already been set correctly for MESSAGE-INTEGRITY validation
-		// at line 544-545. We must NOT overwrite it, as per RFC 5389 Section 15.4.
+		// Note: The length field has already been set to MessageLengthForIntegrity for 
+		// MESSAGE-INTEGRITY validation. We must NOT overwrite it, as per RFC 5389 Section 15.4.
 	}
 	else
 	{
