@@ -151,6 +151,17 @@ private:
 	/** Perform TURN allocation request */
 	bool PerformTURNAllocation(const FString& ServerAddress, const FString& Username, const FString& Credential, FString& OutRelayIP, int32& OutRelayPort);
 
+	/** Perform TURN allocation request with optional authentication */
+	bool PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedPtr<FInternetAddr>& TURNAddr, 
+		const FString& Username, const FString& Credential, const FString& Realm, const FString& Nonce,
+		FString& OutRelayIP, int32& OutRelayPort, bool bIsRetry = false);
+
 	/** Calculate candidate priority */
 	int32 CalculatePriority(EICECandidateType Type, int32 LocalPreference, int32 ComponentId);
+
+	/** Helper function to calculate MD5 hash for TURN authentication */
+	void CalculateMD5(const FString& Input, uint8* OutHash);
+
+	/** Helper function to calculate HMAC-SHA1 for MESSAGE-INTEGRITY */
+	void CalculateHMACSHA1(const uint8* Data, int32 DataLen, const uint8* Key, int32 KeyLen, uint8* OutHash);
 };
