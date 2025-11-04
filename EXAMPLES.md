@@ -739,7 +739,6 @@ Durante el desarrollo, usa:
 ```
 ICE.STATUS          - Ver estado de conexión
 ICE.LISTCANDIDATES  - Ver candidatos ICE
-ICE.SIGNALING       - Ver estado de señalización
 log LogOnlineICE VeryVerbose  - Logs detallados
 ```
 
