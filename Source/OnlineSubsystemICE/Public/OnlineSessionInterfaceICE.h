@@ -108,7 +108,16 @@ private:
 	/** ICE agent for P2P connectivity */
 	TSharedPtr<class FICEAgent> ICEAgent;
 
+	/** Signaling interface for candidate exchange */
+	TSharedPtr<class IICESignaling> SignalingInterface;
+
 	/** Remote peer address for manual signaling */
 	FString RemotePeerIP;
 	int32 RemotePeerPort;
+
+	/** Handle received signaling messages */
+	void OnSignalReceived(const struct FICESignalMessage& Message);
+
+	/** Send local candidates via signaling */
+	void SendLocalCandidates(const FString& SessionId, const FString& ReceiverId);
 };
