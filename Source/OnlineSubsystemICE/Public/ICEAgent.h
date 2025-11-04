@@ -4,8 +4,28 @@
 
 #include "CoreMinimal.h"
 #include "OnlineSubsystemICEPackage.h"
+#include "Delegates/Delegate.h"
 
 class FSocket;
+
+/**
+ * Estados de conexión ICE
+ */
+enum class EICEConnectionState : uint8
+{
+	/** No iniciado */
+	New,
+	/** Recopilando candidatos */
+	Gathering,
+	/** Conectando usando candidatos host/srflx */
+	ConnectingDirect,
+	/** Conectando usando TURN */
+	ConnectingRelay,
+	/** Conexión establecida */
+	Connected,
+	/** Error o desconexión */
+	Failed
+};
 
 /**
  * Types of ICE candidates
@@ -73,46 +93,90 @@ public:
 
 	/**
 	 * Start gathering ICE candidates
+	 * @return True if gathering process started successfully
 	 */
 	bool GatherCandidates();
 
 	/**
 	 * Get all gathered candidates
+	 * @return Array of gathered ICE candidates
 	 */
 	TArray<FICECandidate> GetLocalCandidates() const;
 
 	/**
 	 * Add a remote candidate received from peer
+	 * @param Candidate - The remote candidate to add
 	 */
 	void AddRemoteCandidate(const FICECandidate& Candidate);
 
 	/**
 	 * Start connectivity checks with remote candidates
+	 * Will attempt direct connection first, then fall back to relay if needed
+	 * @return True if the process started successfully
 	 */
 	bool StartConnectivityChecks();
 
 	/**
 	 * Check if connection is established
+	 * @return True if connected
 	 */
 	bool IsConnected() const;
 
 	/**
+	 * Tick function for periodic processing
+	 * Handles connection retries and timeouts
+	 * @param DeltaTime - Time elapsed since last tick
+	 */
+	void Tick(float DeltaTime);
+
+	/**
+	 * Get current connection state
+	 * @return Current state of the ICE connection
+	 */
+	EICEConnectionState GetConnectionState() const 
+	{
+		FScopeLock Lock(&ConnectionLock);
+		return ConnectionState;
+	}
+
+	/**
+	 * Delegate for state change notifications
+	 */
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnConnectionStateChanged, EICEConnectionState);
+
+	/**
+	 * Bind to connection state changes
+	 * @param InDelegate - The delegate to call when connection state changes
+	 * @return Handle to the bound delegate
+	 */
+	FDelegateHandle OnConnectionStateChanged_Handle(const FOnConnectionStateChanged::FDelegate& InDelegate)
+	{
+		return OnConnectionStateChanged.Add(InDelegate);
+	}
+
+private:
+	/** Event that fires when connection state changes */
+	FOnConnectionStateChanged OnConnectionStateChanged;
+
+	/**
 	 * Send data through the established connection
+	 * @param Data - The data to send
+	 * @param Size - Size of the data in bytes
+	 * @return True if send was successful
 	 */
 	bool SendData(const uint8* Data, int32 Size);
 
 	/**
 	 * Receive data from the connection
+	 * @param Data - Buffer to receive data into
+	 * @param MaxSize - Maximum size of the buffer
+	 * @param OutSize - Number of bytes actually received
+	 * @return True if receive was successful
 	 */
 	bool ReceiveData(uint8* Data, int32 MaxSize, int32& OutSize);
 
 	/**
-	 * Tick function for periodic processing
-	 */
-	void Tick(float DeltaTime);
-
-	/**
-	 * Close the connection
+	 * Close the connection and clean up resources
 	 */
 	void Close();
 
@@ -135,6 +199,37 @@ private:
 	/** Selected candidate pair */
 	FICECandidate SelectedLocalCandidate;
 	FICECandidate SelectedRemoteCandidate;
+
+	/** Current connection state */
+	EICEConnectionState ConnectionState;
+
+	/** Number of direct connection attempts made */
+	int32 DirectConnectionAttempts;
+
+	/** Maximum number of direct connection attempts before falling back to TURN */
+	static constexpr int32 MAX_DIRECT_ATTEMPTS = 3;
+
+	/** Delay between connection attempts (seconds) */
+	float RetryDelay;
+
+	/** Time elapsed since last connection attempt */
+	float TimeSinceLastAttempt;
+
+	/** Thread-safe access to connection state */
+	mutable FCriticalSection ConnectionLock;
+
+	/**
+	 * Update the current connection state and notify listeners
+	 * @param NewState - The new connection state to transition to
+	 */
+	void UpdateConnectionState(EICEConnectionState NewState);
+
+	/**
+	 * Get string representation of connection state
+	 * @param State - The state to convert to string
+	 * @return String representation of the state
+	 */
+	FString GetConnectionStateName(EICEConnectionState State) const;
 
 	/** Gather host candidates (local network interfaces) */
 	void GatherHostCandidates();

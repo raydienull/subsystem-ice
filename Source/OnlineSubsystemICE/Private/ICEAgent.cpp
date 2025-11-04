@@ -7,6 +7,8 @@
 #include "IPAddress.h"
 #include "Misc/SecureHash.h"
 
+// ICEAgent.cpp ya no necesita definir la categoría de log, se mueve al módulo
+
 // STUN/TURN protocol constants (RFC 5389/5766)
 namespace STUNConstants
 {
@@ -72,6 +74,10 @@ FICEAgent::FICEAgent(const FICEAgentConfig& InConfig)
 	: Config(InConfig)
 	, Socket(nullptr)
 	, bIsConnected(false)
+	, ConnectionState(EICEConnectionState::New)
+	, DirectConnectionAttempts(0)
+	, RetryDelay(1.0f)
+	, TimeSinceLastAttempt(0.0f)
 {
 }
 
@@ -786,6 +792,29 @@ void FICEAgent::AddRemoteCandidate(const FICECandidate& Candidate)
 	RemoteCandidates.Add(Candidate);
 }
 
+void FICEAgent::UpdateConnectionState(EICEConnectionState NewState)
+{
+	FScopeLock Lock(&ConnectionLock);
+	
+	if (ConnectionState == NewState)
+	{
+		return;
+	}
+
+	// Logging para diagnóstico
+	UE_LOG(LogOnlineICE, Log, TEXT("ICE state change: %s -> %s"),
+		*GetConnectionStateName(ConnectionState),
+		*GetConnectionStateName(NewState));
+
+	ConnectionState = NewState;
+
+	// Notificar a los delegados
+	OnConnectionStateChanged.Broadcast(NewState);
+
+	// Reset timers en cambio de estado
+	TimeSinceLastAttempt = 0.0f;
+}
+
 bool FICEAgent::StartConnectivityChecks()
 {
 	UE_LOG(LogOnlineICE, Log, TEXT("Starting ICE connectivity checks"));
@@ -793,33 +822,109 @@ bool FICEAgent::StartConnectivityChecks()
 	if (LocalCandidates.Num() == 0 || RemoteCandidates.Num() == 0)
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("No candidates available for connectivity checks"));
+		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
 
-	// For a basic implementation, select the highest priority candidate pair
-	// In a full implementation, we would perform STUN connectivity checks on all pairs
-
-	SelectedLocalCandidate = LocalCandidates[0];
-	SelectedRemoteCandidate = RemoteCandidates[0];
-
-	for (const FICECandidate& LocalCand : LocalCandidates)
+	// Intentar primero con candidatos directos (host y server reflexive)
+	if (DirectConnectionAttempts < MAX_DIRECT_ATTEMPTS)
 	{
-		if (LocalCand.Priority > SelectedLocalCandidate.Priority)
+		UpdateConnectionState(EICEConnectionState::ConnectingDirect);
+		DirectConnectionAttempts++;
+
+		// Seleccionar candidatos priorizando host y server reflexive
+		TArray<FICECandidate> DirectLocalCandidates;
+		TArray<FICECandidate> DirectRemoteCandidates;
+
+		for (const FICECandidate& Cand : LocalCandidates)
 		{
-			SelectedLocalCandidate = LocalCand;
+			if (Cand.Type == EICECandidateType::Host || Cand.Type == EICECandidateType::ServerReflexive)
+			{
+				DirectLocalCandidates.Add(Cand);
+			}
+		}
+
+		for (const FICECandidate& Cand : RemoteCandidates)
+		{
+			if (Cand.Type == EICECandidateType::Host || Cand.Type == EICECandidateType::ServerReflexive)
+			{
+				DirectRemoteCandidates.Add(Cand);
+			}
+		}
+
+		if (DirectLocalCandidates.Num() > 0 && DirectRemoteCandidates.Num() > 0)
+		{
+			// Seleccionar el par de mayor prioridad
+			SelectedLocalCandidate = DirectLocalCandidates[0];
+			SelectedRemoteCandidate = DirectRemoteCandidates[0];
+
+			for (const FICECandidate& Cand : DirectLocalCandidates)
+			{
+				if (Cand.Priority > SelectedLocalCandidate.Priority)
+				{
+					SelectedLocalCandidate = Cand;
+				}
+			}
+
+			for (const FICECandidate& Cand : DirectRemoteCandidates)
+			{
+				if (Cand.Priority > SelectedRemoteCandidate.Priority)
+				{
+					SelectedRemoteCandidate = Cand;
+				}
+			}
+
+			UE_LOG(LogOnlineICE, Log, TEXT("Attempting direct connection (try %d/%d) - Local: %s, Remote: %s"),
+				DirectConnectionAttempts, MAX_DIRECT_ATTEMPTS,
+				*SelectedLocalCandidate.ToString(), *SelectedRemoteCandidate.ToString());
+		}
+		else
+		{
+			UE_LOG(LogOnlineICE, Warning, TEXT("No direct candidates available, falling back to relay"));
+			UpdateConnectionState(EICEConnectionState::ConnectingRelay);
 		}
 	}
-
-	for (const FICECandidate& RemoteCand : RemoteCandidates)
+	else
 	{
-		if (RemoteCand.Priority > SelectedRemoteCandidate.Priority)
+		// Si los intentos directos fallaron, intentar con candidatos relay
+		UpdateConnectionState(EICEConnectionState::ConnectingRelay);
+		UE_LOG(LogOnlineICE, Log, TEXT("Direct connection attempts failed, trying relay candidates"));
+
+		// Seleccionar candidatos relay
+		TArray<FICECandidate> RelayLocalCandidates;
+		TArray<FICECandidate> RelayRemoteCandidates;
+
+		for (const FICECandidate& Cand : LocalCandidates)
 		{
-			SelectedRemoteCandidate = RemoteCand;
+			if (Cand.Type == EICECandidateType::Relayed)
+			{
+				RelayLocalCandidates.Add(Cand);
+			}
+		}
+
+		for (const FICECandidate& Cand : RemoteCandidates)
+		{
+			if (Cand.Type == EICECandidateType::Relayed)
+			{
+				RelayRemoteCandidates.Add(Cand);
+			}
+		}
+
+		if (RelayLocalCandidates.Num() > 0 && RelayRemoteCandidates.Num() > 0)
+		{
+			SelectedLocalCandidate = RelayLocalCandidates[0];
+			SelectedRemoteCandidate = RelayRemoteCandidates[0];
+
+			UE_LOG(LogOnlineICE, Log, TEXT("Selected relay candidates - Local: %s, Remote: %s"),
+				*SelectedLocalCandidate.ToString(), *SelectedRemoteCandidate.ToString());
+		}
+		else
+		{
+			UE_LOG(LogOnlineICE, Error, TEXT("No relay candidates available after direct connection failed"));
+			UpdateConnectionState(EICEConnectionState::Failed);
+			return false;
 		}
 	}
-
-	UE_LOG(LogOnlineICE, Log, TEXT("Selected candidate pair - Local: %s, Remote: %s"),
-		*SelectedLocalCandidate.ToString(), *SelectedRemoteCandidate.ToString());
 
 	// Create socket for communication
 	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
@@ -900,7 +1005,38 @@ bool FICEAgent::ReceiveData(uint8* Data, int32 MaxSize, int32& OutSize)
 
 void FICEAgent::Tick(float DeltaTime)
 {
-	// Periodic processing for keepalives, timeouts, etc.
+	TimeSinceLastAttempt += DeltaTime;
+
+	switch (ConnectionState)
+	{
+		case EICEConnectionState::ConnectingDirect:
+		{
+			// Si el tiempo de espera se cumplió y no estamos conectados, reintentar
+			if (TimeSinceLastAttempt >= RetryDelay && !bIsConnected)
+			{
+				UE_LOG(LogOnlineICE, Log, TEXT("Direct connection attempt timed out, retrying..."));
+				StartConnectivityChecks();
+			}
+			break;
+		}
+		case EICEConnectionState::ConnectingRelay:
+		{
+			// Si el tiempo de espera se cumplió y no estamos conectados, marcar como fallido
+			if (TimeSinceLastAttempt >= RetryDelay && !bIsConnected)
+			{
+				UE_LOG(LogOnlineICE, Error, TEXT("Relay connection attempt timed out"));
+				UpdateConnectionState(EICEConnectionState::Failed);
+			}
+			break;
+		}
+		case EICEConnectionState::Connected:
+		{
+			// Implementar keepalive si es necesario
+			break;
+		}
+		default:
+			break;
+	}
 }
 
 void FICEAgent::Close()
@@ -915,7 +1051,14 @@ void FICEAgent::Close()
 		Socket = nullptr;
 	}
 
+	{
+		FScopeLock Lock(&ConnectionLock);
+		ConnectionState = EICEConnectionState::New;
+	}
+
 	bIsConnected = false;
+	DirectConnectionAttempts = 0;
+	TimeSinceLastAttempt = 0.0f;
 	LocalCandidates.Empty();
 	RemoteCandidates.Empty();
 }
@@ -932,6 +1075,27 @@ void FICEAgent::CalculateMD5(const FString& Input, uint8* OutHash)
 	FMD5 MD5Context;
 	MD5Context.Update((const uint8*)UTF8String.Get(), UTF8String.Length());
 	MD5Context.Final(OutHash);
+}
+
+FString FICEAgent::GetConnectionStateName(EICEConnectionState State) const
+{
+	switch (State)
+	{
+		case EICEConnectionState::New:
+			return TEXT("New");
+		case EICEConnectionState::Gathering:
+			return TEXT("Gathering");
+		case EICEConnectionState::ConnectingDirect:
+			return TEXT("ConnectingDirect");
+		case EICEConnectionState::ConnectingRelay:
+			return TEXT("ConnectingRelay");
+		case EICEConnectionState::Connected:
+			return TEXT("Connected");
+		case EICEConnectionState::Failed:
+			return TEXT("Failed");
+		default:
+			return TEXT("Unknown");
+	}
 }
 
 void FICEAgent::CalculateHMACSHA1(const uint8* Data, int32 DataLen, const uint8* Key, int32 KeyLen, uint8* OutHash)
