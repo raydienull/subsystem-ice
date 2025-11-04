@@ -21,6 +21,8 @@ enum class EICEConnectionState : uint8
 	ConnectingDirect,
 	/** Conectando usando TURN */
 	ConnectingRelay,
+	/** Realizando handshake para verificar conexión bidireccional */
+	PerformingHandshake,
 	/** Conexión establecida */
 	Connected,
 	/** Error o desconexión */
@@ -180,6 +182,18 @@ private:
 	 */
 	void Close();
 
+	/**
+	 * Send handshake packet to verify bidirectional communication
+	 * @return True if handshake packet was sent successfully
+	 */
+	bool SendHandshake();
+
+	/**
+	 * Process received data and handle handshake packets
+	 * @return True if data was processed successfully
+	 */
+	bool ProcessReceivedData();
+
 private:
 	/** Agent configuration */
 	FICEAgentConfig Config;
@@ -217,6 +231,15 @@ private:
 
 	/** Thread-safe access to connection state */
 	mutable FCriticalSection ConnectionLock;
+
+	/** Handshake state tracking */
+	bool bHandshakeSent;
+	bool bHandshakeReceived;
+	float HandshakeTimeout;
+	float TimeSinceHandshakeStart;
+	
+	/** Maximum time to wait for handshake response (seconds) */
+	static constexpr float MAX_HANDSHAKE_TIMEOUT = 5.0f;
 
 	/**
 	 * Update the current connection state and notify listeners
