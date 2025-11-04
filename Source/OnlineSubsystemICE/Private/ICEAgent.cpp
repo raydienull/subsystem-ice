@@ -20,6 +20,16 @@ namespace STUNConstants
 	constexpr int32 SHA1_BLOCK_SIZE = 64;
 }
 
+// Handshake protocol constants
+namespace HandshakeConstants
+{
+	constexpr uint8 MAGIC_NUMBER[4] = {0x49, 0x43, 0x45, 0x48}; // "ICEH"
+	constexpr uint8 PACKET_TYPE_HELLO_REQUEST = 0x01;
+	constexpr uint8 PACKET_TYPE_HELLO_RESPONSE = 0x02;
+	constexpr int32 HANDSHAKE_PACKET_SIZE = 9;
+	constexpr int32 MAX_RECEIVE_BUFFER_SIZE = 1024;
+}
+
 FString FICECandidate::ToString() const
 {
 	return FString::Printf(TEXT("candidate:%s %d %s %d %s %d typ %s"),
@@ -1060,7 +1070,7 @@ void FICEAgent::Tick(float DeltaTime)
 				}
 			}
 			// Reintentar envío de handshake cada segundo si no hemos recibido respuesta
-			else if (TimeSinceLastHandshakeSend >= HANDSHAKE_RETRY_INTERVAL && bHandshakeSent && !bHandshakeReceived)
+			else if (ShouldRetryHandshake())
 			{
 				UE_LOG(LogOnlineICE, Log, TEXT("Retrying handshake (%.1f seconds elapsed)"), TimeSinceHandshakeStart);
 				SendHandshake();
@@ -1096,16 +1106,18 @@ bool FICEAgent::SendHandshake()
 
 	// Crear paquete de handshake simple
 	// Formato: [Magic Number (4 bytes)] [Type (1 byte)] [Timestamp (4 bytes)]
-	uint8 HandshakePacket[9];
+	uint8 HandshakePacket[HandshakeConstants::HANDSHAKE_PACKET_SIZE];
 	
-	// Magic number "ICEH" = 0x49434548
-	HandshakePacket[0] = 0x49; // 'I'
-	HandshakePacket[1] = 0x43; // 'C'
-	HandshakePacket[2] = 0x45; // 'E'
-	HandshakePacket[3] = 0x48; // 'H'
+	// Magic number "ICEH"
+	for (int32 i = 0; i < 4; i++)
+	{
+		HandshakePacket[i] = HandshakeConstants::MAGIC_NUMBER[i];
+	}
 	
-	// Type: 0x01 = HELLO request, 0x02 = HELLO response
-	HandshakePacket[4] = bHandshakeReceived ? 0x02 : 0x01;
+	// Type: HELLO request or HELLO response
+	HandshakePacket[4] = bHandshakeReceived ? 
+		HandshakeConstants::PACKET_TYPE_HELLO_RESPONSE : 
+		HandshakeConstants::PACKET_TYPE_HELLO_REQUEST;
 	
 	// Timestamp (simple counter for correlation)
 	uint32 Timestamp = FPlatformTime::Cycles();
@@ -1175,7 +1187,7 @@ bool FICEAgent::ProcessReceivedData()
 	}
 
 	// Buffer para recibir datos
-	uint8 ReceiveBuffer[1024];
+	uint8 ReceiveBuffer[HandshakeConstants::MAX_RECEIVE_BUFFER_SIZE];
 	int32 BytesRead = 0;
 	TSharedRef<FInternetAddr> FromAddr = SocketSubsystem->CreateInternetAddr();
 
@@ -1184,19 +1196,28 @@ bool FICEAgent::ProcessReceivedData()
 		return false;
 	}
 
-	if (BytesRead < 9)
+	if (BytesRead < HandshakeConstants::HANDSHAKE_PACKET_SIZE)
 	{
 		// Paquete demasiado pequeño para ser un handshake válido
 		return false;
 	}
 
 	// Verificar magic number
-	if (ReceiveBuffer[0] == 0x49 && ReceiveBuffer[1] == 0x43 && 
-		ReceiveBuffer[2] == 0x45 && ReceiveBuffer[3] == 0x48)
+	bool bIsMagicNumberValid = true;
+	for (int32 i = 0; i < 4; i++)
+	{
+		if (ReceiveBuffer[i] != HandshakeConstants::MAGIC_NUMBER[i])
+		{
+			bIsMagicNumberValid = false;
+			break;
+		}
+	}
+
+	if (bIsMagicNumberValid)
 	{
 		uint8 PacketType = ReceiveBuffer[4];
 		
-		if (PacketType == 0x01) // HELLO request
+		if (PacketType == HandshakeConstants::PACKET_TYPE_HELLO_REQUEST) // HELLO request
 		{
 			UE_LOG(LogOnlineICE, Log, TEXT("Received handshake HELLO request from %s"), 
 				*FromAddr->ToString(true));
@@ -1216,7 +1237,7 @@ bool FICEAgent::ProcessReceivedData()
 			
 			return true;
 		}
-		else if (PacketType == 0x02) // HELLO response
+		else if (PacketType == HandshakeConstants::PACKET_TYPE_HELLO_RESPONSE) // HELLO response
 		{
 			UE_LOG(LogOnlineICE, Log, TEXT("Received handshake HELLO response from %s"), 
 				*FromAddr->ToString(true));
@@ -1278,6 +1299,13 @@ void FICEAgent::CalculateMD5(const FString& Input, uint8* OutHash)
 	FMD5 MD5Context;
 	MD5Context.Update((const uint8*)UTF8String.Get(), UTF8String.Length());
 	MD5Context.Final(OutHash);
+}
+
+bool FICEAgent::ShouldRetryHandshake() const
+{
+	return TimeSinceLastHandshakeSend >= HANDSHAKE_RETRY_INTERVAL && 
+	       bHandshakeSent && 
+	       !bHandshakeReceived;
 }
 
 FString FICEAgent::GetConnectionStateName(EICEConnectionState State) const

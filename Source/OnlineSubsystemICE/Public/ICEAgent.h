@@ -258,6 +258,12 @@ private:
 	 */
 	FString GetConnectionStateName(EICEConnectionState State) const;
 
+	/**
+	 * Check if handshake should be retried based on current state and timing
+	 * @return True if handshake should be retried
+	 */
+	bool ShouldRetryHandshake() const;
+
 	/** Gather host candidates (local network interfaces) */
 	void GatherHostCandidates();
 
