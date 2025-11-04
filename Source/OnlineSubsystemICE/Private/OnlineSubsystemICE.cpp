@@ -5,9 +5,6 @@
 #include "OnlineIdentityInterfaceICE.h"
 #include "Misc/ConfigCacheIni.h"
 
-// Default number of public connections for ICE cheat commands
-static constexpr int32 ICE_DEFAULT_MAX_PLAYERS = 4;
-
 FOnlineSubsystemICE::FOnlineSubsystemICE(FName InInstanceName)
 	: FOnlineSubsystemImpl(TEXT("ICE"), InInstanceName)
 	, SessionInterface(nullptr)
@@ -97,6 +94,7 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 				SessionSettings.bAllowInvites = true;
 				
 				// Bind to completion delegate with self-cleanup
+				// Note: Capturing SessionNameStr by value to ensure it outlives the async callback
 				TSharedPtr<FDelegateHandle> DelegateHandlePtr = MakeShared<FDelegateHandle>();
 				*DelegateHandlePtr = SessionInterface->OnCreateSessionCompleteDelegates.AddLambda([SessionNameStr, DelegateHandlePtr](FName InSessionName, bool bWasSuccessful)
 				{
@@ -186,6 +184,7 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 				SearchResult.Session.SessionSettings.bAllowInvites = true;
 				
 				// Bind to completion delegate with self-cleanup
+				// Note: Capturing SessionNameStr by value to ensure it outlives the async callback
 				TSharedPtr<FDelegateHandle> DelegateHandlePtr = MakeShared<FDelegateHandle>();
 				*DelegateHandlePtr = SessionInterface->OnJoinSessionCompleteDelegates.AddLambda([SessionNameStr, DelegateHandlePtr](FName InSessionName, EOnJoinSessionCompleteResult::Type Result)
 				{

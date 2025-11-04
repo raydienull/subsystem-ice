@@ -14,9 +14,6 @@ IMPLEMENT_MODULE(FOnlineSubsystemICEModule, OnlineSubsystemICE);
 
 DEFINE_LOG_CATEGORY(LogOnlineICE);
 
-// Default number of public connections for ICE cheat commands
-static constexpr int32 ICE_DEFAULT_MAX_PLAYERS = 4;
-
 /**
  * Class responsible for creating instances of the ICE online subsystem
  */
@@ -117,6 +114,7 @@ void FOnlineSubsystemICEModule::StartupModule()
 					SessionSettings.bAllowInvites = true;
 					
 					// Bind to completion delegate with self-cleanup
+					// Note: Capturing SessionName by value to ensure it outlives the async callback
 					TSharedPtr<FDelegateHandle> DelegateHandlePtr = MakeShared<FDelegateHandle>();
 					*DelegateHandlePtr = SessionInterface->OnCreateSessionCompleteDelegates.AddLambda([SessionName, DelegateHandlePtr](FName InSessionName, bool bWasSuccessful)
 					{
@@ -221,6 +219,7 @@ void FOnlineSubsystemICEModule::StartupModule()
 					SearchResult.Session.SessionSettings.bAllowInvites = true;
 					
 					// Bind to completion delegate with self-cleanup
+					// Note: Capturing SessionName by value to ensure it outlives the async callback
 					TSharedPtr<FDelegateHandle> DelegateHandlePtr = MakeShared<FDelegateHandle>();
 					*DelegateHandlePtr = SessionInterface->OnJoinSessionCompleteDelegates.AddLambda([SessionName, DelegateHandlePtr](FName InSessionName, EOnJoinSessionCompleteResult::Type Result)
 					{
