@@ -4,12 +4,79 @@ Esta guía proporciona ejemplos prácticos y completos para usar OnlineSubsystem
 
 ## Tabla de Contenidos
 
-1. [Configuración Inicial](#configuración-inicial)
-2. [Crear una Sesión (Host)](#crear-una-sesión-host)
-3. [Unirse a una Sesión (Cliente)](#unirse-a-una-sesión-cliente)
-4. [Sistema Completo en GameMode](#sistema-completo-en-gamemode)
-5. [Integración con UI (Widgets)](#integración-con-ui-widgets)
-6. [Blueprints](#blueprints)
+1. [Testing Rápido con Comandos de Consola](#testing-rápido-con-comandos-de-consola) ⭐ **NUEVO**
+2. [Configuración Inicial](#configuración-inicial)
+3. [Crear una Sesión (Host)](#crear-una-sesión-host)
+4. [Unirse a una Sesión (Cliente)](#unirse-a-una-sesión-cliente)
+5. [Sistema Completo en GameMode](#sistema-completo-en-gamemode)
+6. [Integración con UI (Widgets)](#integración-con-ui-widgets)
+7. [Blueprints](#blueprints)
+
+## Testing Rápido con Comandos de Consola
+
+**⭐ NUEVO**: Comandos simplificados `ICE.HOST` e `ICE.JOIN` para probar P2P rápidamente!
+
+### Escenario: Dos Instancias del Juego
+
+Esta es la forma más rápida de probar conectividad P2P entre dos instancias del juego.
+
+**Instancia A (Host):**
+```
+# Crear sesión de host
+ICE.HOST MiPartida
+
+# Ver candidatos ICE locales
+ICE.LISTCANDIDATES
+```
+
+**Instancia B (Cliente):**
+```
+# Unirse a la sesión
+ICE.JOIN MiPartida
+
+# Ver candidatos ICE locales
+ICE.LISTCANDIDATES
+```
+
+**Ambas Instancias:**
+```
+# Intercambiar candidatos (copiar/pegar de ICE.LISTCANDIDATES)
+ICE.ADDCANDIDATE candidate:1 1 UDP 2130706431 192.168.1.100 5000 typ host
+
+# Iniciar checks de conectividad
+ICE.STARTCHECKS
+
+# Verificar estado de conexión
+ICE.STATUS
+```
+
+### ¿Qué hacen estos comandos?
+
+- **`ICE.HOST [nombreSesión]`**: Crea una sesión de host con configuración por defecto (4 jugadores, anuncio público, permite join en progreso). Si no se especifica nombre, usa "GameSession".
+
+- **`ICE.JOIN <nombreSesión>`**: Se une a una sesión existente. El nombre debe coincidir con el usado en `ICE.HOST`.
+
+- **`ICE.LISTCANDIDATES`**: Muestra los candidatos ICE locales (direcciones IP/puerto que pueden usar para conectar).
+
+- **`ICE.ADDCANDIDATE <candidato>`**: Agrega un candidato ICE remoto (copiado de la otra instancia).
+
+- **`ICE.STARTCHECKS`**: Inicia los checks de conectividad ICE para establecer la conexión P2P.
+
+- **`ICE.STATUS`**: Muestra el estado actual de la conexión ICE.
+
+### Ventajas
+
+✅ No requiere código C++ ni Blueprint  
+✅ Perfecto para testing rápido  
+✅ Útil para debugging de problemas de red  
+✅ Configuración por defecto optimizada  
+
+### Limitaciones
+
+⚠️ Los candidatos ICE todavía deben intercambiarse manualmente (copiar/pegar)  
+⚠️ Para producción, implementa tu propio sistema de señalización  
+
+Ver [TESTING_GUIDE.md](TESTING_GUIDE.md) para más detalles.
 
 ## Configuración Inicial
 

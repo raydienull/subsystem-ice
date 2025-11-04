@@ -182,12 +182,28 @@ SessionICE->AddRemoteICECandidate(CandidateString);
 
 **Testing Commands:**
 ```
+ICE.HOST [sessionName]            - Host a new game session (simplified)
+ICE.JOIN <sessionName>            - Join an existing game session (simplified)
 ICE.SETREMOTEPEER <ip> <port>     - Set remote peer address
 ICE.ADDCANDIDATE <candidate>      - Add remote ICE candidate
 ICE.LISTCANDIDATES                - List local ICE candidates
 ICE.STARTCHECKS                   - Start connectivity checks
 ICE.STATUS                        - Show connection status
 ICE.HELP                          - Show all commands
+```
+
+**Quick Testing Workflow:**
+```
+# Instance A (Host)
+ICE.HOST MySession
+ICE.LISTCANDIDATES
+
+# Instance B (Client)
+ICE.JOIN MySession
+ICE.LISTCANDIDATES
+
+# Both instances: Exchange candidates using ICE.ADDCANDIDATE
+# Both instances: ICE.STARTCHECKS
 ```
 
 See [TESTING_GUIDE.md](TESTING_GUIDE.md) for detailed testing workflows.
