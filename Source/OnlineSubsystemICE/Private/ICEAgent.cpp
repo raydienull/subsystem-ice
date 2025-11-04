@@ -82,6 +82,7 @@ FICEAgent::FICEAgent(const FICEAgentConfig& InConfig)
 	, bHandshakeReceived(false)
 	, HandshakeTimeout(MAX_HANDSHAKE_TIMEOUT)
 	, TimeSinceHandshakeStart(0.0f)
+	, TimeSinceLastHandshakeSend(0.0f)
 {
 }
 
@@ -1046,21 +1047,24 @@ void FICEAgent::Tick(float DeltaTime)
 			ProcessReceivedData();
 			
 			TimeSinceHandshakeStart += DeltaTime;
+			TimeSinceLastHandshakeSend += DeltaTime;
 			
 			// Verificar timeout del handshake
 			if (TimeSinceHandshakeStart >= HandshakeTimeout)
 			{
-				if (!bIsConnected)
+				// Usar flags de handshake en lugar de bIsConnected para evitar race conditions
+				if (!bHandshakeSent || !bHandshakeReceived)
 				{
 					UE_LOG(LogOnlineICE, Error, TEXT("Handshake timeout - no response from peer"));
 					UpdateConnectionState(EICEConnectionState::Failed);
 				}
 			}
 			// Reintentar envío de handshake cada segundo si no hemos recibido respuesta
-			else if (TimeSinceHandshakeStart >= 1.0f && bHandshakeSent && !bHandshakeReceived)
+			else if (TimeSinceLastHandshakeSend >= HANDSHAKE_RETRY_INTERVAL && bHandshakeSent && !bHandshakeReceived)
 			{
 				UE_LOG(LogOnlineICE, Log, TEXT("Retrying handshake (%.1f seconds elapsed)"), TimeSinceHandshakeStart);
 				SendHandshake();
+				TimeSinceLastHandshakeSend = 0.0f; // Reset retry timer
 			}
 			break;
 		}
@@ -1094,7 +1098,7 @@ bool FICEAgent::SendHandshake()
 	// Formato: [Magic Number (4 bytes)] [Type (1 byte)] [Timestamp (4 bytes)]
 	uint8 HandshakePacket[9];
 	
-	// Magic number "ICEHS" = 0x49434548 0x53
+	// Magic number "ICEH" = 0x49434548
 	HandshakePacket[0] = 0x49; // 'I'
 	HandshakePacket[1] = 0x43; // 'C'
 	HandshakePacket[2] = 0x45; // 'E'
@@ -1125,8 +1129,13 @@ bool FICEAgent::SendHandshake()
 	{
 		if (!bHandshakeReceived)
 		{
-			bHandshakeSent = true;
-			TimeSinceHandshakeStart = 0.0f;
+			// Solo inicializar el timer en el primer envío, no en reintentos
+			if (!bHandshakeSent)
+			{
+				bHandshakeSent = true;
+				TimeSinceHandshakeStart = 0.0f;
+				TimeSinceLastHandshakeSend = 0.0f;
+			}
 			UE_LOG(LogOnlineICE, Log, TEXT("Handshake HELLO request sent to %s:%d"), 
 				*SelectedRemoteCandidate.Address, SelectedRemoteCandidate.Port);
 		}
@@ -1252,6 +1261,7 @@ void FICEAgent::Close()
 	DirectConnectionAttempts = 0;
 	TimeSinceLastAttempt = 0.0f;
 	TimeSinceHandshakeStart = 0.0f;
+	TimeSinceLastHandshakeSend = 0.0f;
 	LocalCandidates.Empty();
 	RemoteCandidates.Empty();
 }

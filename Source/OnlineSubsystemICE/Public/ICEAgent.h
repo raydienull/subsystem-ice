@@ -237,9 +237,13 @@ private:
 	bool bHandshakeReceived;
 	float HandshakeTimeout;
 	float TimeSinceHandshakeStart;
+	float TimeSinceLastHandshakeSend;
 	
 	/** Maximum time to wait for handshake response (seconds) */
 	static constexpr float MAX_HANDSHAKE_TIMEOUT = 5.0f;
+	
+	/** Retry interval for handshake packets (seconds) */
+	static constexpr float HANDSHAKE_RETRY_INTERVAL = 1.0f;
 
 	/**
 	 * Update the current connection state and notify listeners
