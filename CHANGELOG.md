@@ -2,6 +2,27 @@
 
 All notable changes to OnlineSubsystemICE will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+#### Connection Handshake Verification
+- **Bidirectional Connectivity Check**: Added handshake mechanism to verify connection establishment
+  - HELLO request/response packet exchange before marking connection as established
+  - 9-byte packet format with magic number "ICEH", type byte, and timestamp
+  - Automatic retry every 1 second with 5-second timeout
+  - New connection state: `PerformingHandshake` between socket creation and final connection
+  - Ensures both peers can send and receive data before declaring connection successful
+
+#### Enhanced Connection States
+- **New State**: `PerformingHandshake` - Connection is performing handshake verification
+- **State Flow**: ConnectingDirect/ConnectingRelay → PerformingHandshake → Connected
+- **Improved Logging**: Enhanced state transition logging for better debugging
+
+### Changed
+- **Connection Establishment**: Connection marked as "Connected" only after successful handshake
+- **Reliability**: Prevents false positive connections where socket is created but data can't flow
+
 ## [2.2.0] - 2025-11-04
 
 ### Changed

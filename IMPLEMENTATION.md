@@ -140,11 +140,44 @@ Handles low-level ICE operations including candidate gathering and connectivity 
 2. **Server Reflexive Candidates (srflx)**: Public addresses via STUN
 3. **Relayed Candidates (relay)**: Relay addresses via TURN
 
+#### Connection Establishment with Handshake Verification
+
+The ICE agent implements a handshake mechanism to verify bidirectional connectivity:
+
+##### Handshake Protocol
+- **Purpose**: Ensures both peers can send and receive data before marking connection as established
+- **Packet Format**: 9-byte packets with magic number "ICEH" (0x49434548), type byte, and timestamp
+- **Packet Types**:
+  - `0x01`: HELLO request - Initial connection verification
+  - `0x02`: HELLO response - Acknowledgment of successful receipt
+
+##### Connection Flow
+1. **Socket Creation**: After ICE candidate pair selection, create UDP socket
+2. **Handshake Initiation**: Send HELLO request packet to remote peer
+3. **State Transition**: Move to `PerformingHandshake` state
+4. **Peer Response**: Remote peer receives request and sends HELLO response
+5. **Connection Established**: Connection marked as `Connected` only after handshake completes
+
+##### Timeout & Retry Mechanism
+- **Timeout**: 5 seconds maximum wait for handshake completion
+- **Retry Interval**: Retransmit HELLO request every 1 second if no response
+- **Failure Handling**: Connection marked as `Failed` if handshake times out
+
+##### Connection States
+- `New`: Initial state
+- `Gathering`: Collecting ICE candidates
+- `ConnectingDirect`: Attempting direct connection (host/srflx candidates)
+- `ConnectingRelay`: Attempting relay connection (TURN candidates)
+- `PerformingHandshake`: Verifying bidirectional communication
+- `Connected`: Handshake complete, connection established
+- `Failed`: Connection attempt failed
+
 #### Integration Points
 
 - **Session Creation**: Automatic candidate gathering
 - **Session Joining**: Candidate preparation for connection
 - **Console Commands**: Manual candidate exchange for testing
+- **Handshake Verification**: Automatic bidirectional connectivity check
 
 ### 3. Identity Management (`FOnlineIdentityICE`)
 
