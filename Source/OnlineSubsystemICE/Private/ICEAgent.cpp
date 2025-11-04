@@ -23,7 +23,7 @@ namespace STUNConstants
 // Handshake protocol constants
 namespace HandshakeConstants
 {
-	constexpr uint8 MAGIC_NUMBER[4] = {0x49, 0x43, 0x45, 0x48}; // "ICEH"
+	static const uint8 MAGIC_NUMBER[4] = {0x49, 0x43, 0x45, 0x48}; // "ICEH"
 	constexpr uint8 PACKET_TYPE_HELLO_REQUEST = 0x01;
 	constexpr uint8 PACKET_TYPE_HELLO_RESPONSE = 0x02;
 	constexpr int32 HANDSHAKE_PACKET_SIZE = 9;
@@ -1063,6 +1063,7 @@ void FICEAgent::Tick(float DeltaTime)
 			if (TimeSinceHandshakeStart >= HandshakeTimeout)
 			{
 				// Use handshake flags instead of bIsConnected to avoid race conditions
+				// Fail if either part of handshake is incomplete: !sent OR !received == !(sent AND received)
 				if (!bHandshakeSent || !bHandshakeReceived)
 				{
 					UE_LOG(LogOnlineICE, Error, TEXT("Handshake timeout - no response from peer"));
@@ -1227,13 +1228,8 @@ bool FICEAgent::ProcessReceivedData()
 			// Respond with HELLO response
 			SendHandshake();
 			
-			// If we already sent our request, connection is established
-			if (bHandshakeSent)
-			{
-				bIsConnected = true;
-				UpdateConnectionState(EICEConnectionState::Connected);
-				UE_LOG(LogOnlineICE, Log, TEXT("ICE connection fully established - handshake complete"));
-			}
+			// Check if handshake is complete
+			CompleteHandshake();
 			
 			return true;
 		}
@@ -1244,13 +1240,8 @@ bool FICEAgent::ProcessReceivedData()
 			
 			bHandshakeReceived = true;
 			
-			// Connection established
-			if (bHandshakeSent)
-			{
-				bIsConnected = true;
-				UpdateConnectionState(EICEConnectionState::Connected);
-				UE_LOG(LogOnlineICE, Log, TEXT("ICE connection fully established - handshake complete"));
-			}
+			// Check if handshake is complete
+			CompleteHandshake();
 			
 			return true;
 		}
@@ -1306,6 +1297,16 @@ bool FICEAgent::ShouldRetryHandshake() const
 	return TimeSinceLastHandshakeSend >= HANDSHAKE_RETRY_INTERVAL && 
 	       bHandshakeSent && 
 	       !bHandshakeReceived;
+}
+
+void FICEAgent::CompleteHandshake()
+{
+	if (bHandshakeSent && bHandshakeReceived)
+	{
+		bIsConnected = true;
+		UpdateConnectionState(EICEConnectionState::Connected);
+		UE_LOG(LogOnlineICE, Log, TEXT("ICE connection fully established - handshake complete"));
+	}
 }
 
 FString FICEAgent::GetConnectionStateName(EICEConnectionState State) const

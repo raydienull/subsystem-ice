@@ -264,6 +264,12 @@ private:
 	 */
 	bool ShouldRetryHandshake() const;
 
+	/**
+	 * Complete the handshake process and establish connection
+	 * Called when both send and receive handshake have completed
+	 */
+	void CompleteHandshake();
+
 	/** Gather host candidates (local network interfaces) */
 	void GatherHostCandidates();
 
