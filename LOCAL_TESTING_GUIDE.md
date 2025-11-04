@@ -1,29 +1,34 @@
-# Guía de Testing Local con Señalización Automática
+# Guía de Testing Local con Delegados
 
-Esta guía explica cómo probar la conectividad P2P entre múltiples clientes en la misma máquina o red local usando el nuevo sistema de señalización automática.
+Esta guía explica cómo probar la conectividad P2P entre múltiples clientes en la misma máquina o red local usando el sistema de delegados de OnlineSubsystemICE.
 
 ## Resumen
 
-OnlineSubsystemICE ahora incluye un sistema de señalización basado en archivos que permite el intercambio automático de candidatos ICE entre clientes sin necesidad de un servidor de señalización dedicado.
+OnlineSubsystemICE usa **delegados multicast de Unreal** para notificar cuando los candidatos ICE están listos. Esto permite implementar cualquier mecanismo de señalización que necesites.
 
-### ¿Qué ha cambiado?
+### Arquitectura
 
-**Antes (Manual):**
-- Crear sesión en Cliente A
-- Ejecutar `ICE.LISTCANDIDATES` en Cliente A
-- Copiar candidatos manualmente
-- Ejecutar `ICE.ADDCANDIDATE` en Cliente B
-- Repetir en dirección inversa
+**Sistema de Delegados:**
+- Cuando se crea/une a una sesión, el sistema recopila candidatos ICE
+- El delegado `OnLocalCandidatesReady` se dispara con los candidatos locales
+- Tu aplicación envía estos candidatos al peer remoto (REST API, WebSocket, etc.)
+- Cuando recibes candidatos remotos, llamas a `AddRemoteICECandidate()`
+- El delegado `OnRemoteCandidateReceived` se dispara al recibir candidatos
 
-**Ahora (Automático):**
-- Crear sesión en Cliente A
-- Unirse a sesión en Cliente B
-- ✅ **Los candidatos se intercambian automáticamente**
+### Para Testing Local
+
+**Opción 1: Comandos de Consola (Testing Manual):**
+- Usar `ICE.LISTCANDIDATES` y `ICE.ADDCANDIDATE` para intercambio manual
+- Ver [TESTING_GUIDE.md](TESTING_GUIDE.md) para detalles
+
+**Opción 2: Implementar Señalización Personalizada:**
+- Implementar sistema de señalización temporal para testing
+- Puede ser tan simple como una carpeta compartida o un servidor HTTP local
 
 ## Requisitos
 
 - Dos o más instancias del juego ejecutándose
-- Acceso a un directorio compartido (por defecto: `ProjectSaved/ICESignaling`)
+- Implementación de señalización (manual o programática)
 - Configuración básica de OnlineSubsystemICE
 
 ## Configuración Inicial
@@ -42,128 +47,148 @@ STUNServer=stun.l.google.com:19302
 ; TURNCredential=password
 ```
 
-### 2. Verificar Directorio de Señalización
-
-El sistema usa automáticamente:
-```
-<Tu Proyecto>/Saved/ICESignaling/
-```
-
-Este directorio se crea automáticamente cuando se inicia el sistema.
-
 ## Workflow de Testing Básico
 
-### Escenario 1: Host y Cliente en la Misma Máquina
+### Opción 1: Testing Manual con Comandos de Consola
 
-#### Paso 1: Iniciar Host (Instance A)
+Esta es la forma más simple de testing local. Ver [TESTING_GUIDE.md](TESTING_GUIDE.md) para detalles completos.
+
+**Pasos:**
+1. Instancia A: Crear sesión y ejecutar `ICE.LISTCANDIDATES`
+2. Copiar candidatos de A
+3. Instancia B: Unirse a sesión y ejecutar `ICE.ADDCANDIDATE <candidato>` para cada candidato de A
+4. Instancia B: Ejecutar `ICE.LISTCANDIDATES`
+5. Copiar candidatos de B
+6. Instancia A: Ejecutar `ICE.ADDCANDIDATE <candidato>` para cada candidato de B
+7. Ambas instancias: Ejecutar `ICE.STARTCHECKS`
+
+### Opción 2: Implementar Señalización con Delegados
+
+Para automatizar el intercambio de candidatos, implementa tu propia lógica de señalización:
 
 ```cpp
-// En Blueprint o C++
+// Obtener la interfaz de sesión
 IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get();
-IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+IOnlineSessionPtr SessionInterface = OnlineSub->GetSessionInterface();
+FOnlineSessionICE* SessionICE = static_cast<FOnlineSessionICE*>(SessionInterface.Get());
 
-FOnlineSessionSettings Settings;
-Settings.NumPublicConnections = 4;
-Settings.bShouldAdvertise = true;
-Settings.bIsLANMatch = false;
-Settings.bUsesPresence = true;
-
-Sessions->CreateSession(0, FName("GameSession"), Settings);
-```
-
-**Log esperado:**
-```
-LogOnlineICE: Gathering ICE candidates for session 'GameSession'
-LogOnlineICE: Gathered 3 ICE candidates for session
-LogOnlineICE: Sent 3 candidates for session GameSession
-```
-
-#### Paso 2: Iniciar Cliente (Instance B)
-
-```cpp
-// Buscar sesiones
-TSharedRef<FOnlineSessionSearch> SearchSettings = MakeShared<FOnlineSessionSearch>();
-SearchSettings->MaxSearchResults = 10;
-
-Sessions->FindSessions(0, SearchSettings);
-
-// En el delegate OnFindSessionsComplete:
-if (SearchSettings->SearchResults.Num() > 0)
+// Bind al delegado de candidatos locales listos
+SessionICE->OnLocalCandidatesReady.AddLambda([](FName SessionName, const TArray<FICECandidate>& Candidates)
 {
-    Sessions->JoinSession(0, FName("JoinedSession"), SearchSettings->SearchResults[0]);
+    UE_LOG(LogTemp, Log, TEXT("Candidatos locales listos para %s: %d candidatos"), *SessionName.ToString(), Candidates.Num());
+    
+    // Aquí implementas tu lógica de señalización
+    // Ejemplos:
+    // - Guardar en archivo compartido
+    // - Enviar por HTTP/REST API
+    // - Enviar por WebSocket
+    // - Usar servidor de señalización personalizado
+    
+    for (const FICECandidate& Candidate : Candidates)
+    {
+        FString CandidateString = Candidate.ToString();
+        // Enviar CandidateString al peer remoto
+        MySignalingSystem->SendToRemotePeer(SessionName, CandidateString);
+    }
+});
+
+// Bind al delegado de candidatos remotos recibidos
+SessionICE->OnRemoteCandidateReceived.AddLambda([](FName SessionName, const FICECandidate& Candidate)
+{
+    UE_LOG(LogTemp, Log, TEXT("Candidato remoto recibido: %s"), *Candidate.ToString());
+});
+
+// Cuando recibes un candidato del peer remoto
+void OnReceiveCandidateFromRemote(const FString& SessionName, const FString& CandidateString)
+{
+    SessionICE->AddRemoteICECandidate(CandidateString);
 }
 ```
 
-**Log esperado:**
+### Opción 3: Ejemplo Simple de Señalización con Archivo Compartido
+
+Si quieres una implementación rápida para testing, puedes usar archivos compartidos:
+
+```cpp
+// Sistema simple de señalización basado en archivos
+class FSimpleFileSignaling
+{
+public:
+    FSimpleFileSignaling(const FString& SharedDirectory)
+        : SignalingDir(SharedDirectory)
+    {
+        // Crear directorio si no existe
+        IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+        if (!PlatformFile.DirectoryExists(*SignalingDir))
+        {
+            PlatformFile.CreateDirectory(*SignalingDir);
+        }
+    }
+    
+    void SendCandidate(FName SessionName, const FString& CandidateString)
+    {
+        // Generar nombre único para archivo
+        FString FileName = FString::Printf(TEXT("%s_%s_%s.txt"), 
+            *SessionName.ToString(), 
+            *FGuid::NewGuid().ToString(), 
+            *FDateTime::UtcNow().ToString());
+        FString FilePath = FPaths::Combine(SignalingDir, FileName);
+        
+        // Guardar candidato en archivo
+        FFileHelper::SaveStringToFile(CandidateString, *FilePath);
+    }
+    
+    void CheckForCandidates(FName SessionName, TFunction<void(const FString&)> OnCandidateReceived)
+    {
+        IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+        
+        // Buscar archivos en el directorio
+        TArray<FString> Files;
+        PlatformFile.FindFiles(Files, *SignalingDir, TEXT(".txt"));
+        
+        for (const FString& FileName : Files)
+        {
+            FString FilePath = FPaths::Combine(SignalingDir, FileName);
+            FString CandidateString;
+            
+            if (FFileHelper::LoadFileToString(CandidateString, *FilePath))
+            {
+                OnCandidateReceived(CandidateString);
+                // Opcional: eliminar archivo después de procesarlo
+                PlatformFile.DeleteFile(*FilePath);
+            }
+        }
+    }
+    
+private:
+    FString SignalingDir;
+};
+
+// Uso:
+FSimpleFileSignaling Signaling(TEXT("C:/SharedFolder/ICESignaling"));
+
+// Al recibir candidatos locales
+SessionICE->OnLocalCandidatesReady.AddLambda([&Signaling](FName SessionName, const TArray<FICECandidate>& Candidates)
+{
+    for (const FICECandidate& Candidate : Candidates)
+    {
+        Signaling.SendCandidate(SessionName, Candidate.ToString());
+    }
+});
+
+// Tick para verificar nuevos candidatos (llamar periódicamente)
+void Tick(float DeltaTime)
+{
+    Signaling.CheckForCandidates(FName("GameSession"), [SessionICE](const FString& CandidateString)
+    {
+        SessionICE->AddRemoteICECandidate(CandidateString);
+    });
+}
 ```
-LogOnlineICE: Gathering ICE candidates for joining session 'JoinedSession'
-LogOnlineICE: Sent 3 candidates for session JoinedSession
-LogOnlineICE: Received signal from <HostPeerId>: Type=0, Candidates=3
-LogOnlineICE: Starting ICE connectivity checks
-LogOnlineICE: ICE connection state changed: ConnectingDirect
-```
 
-#### Paso 3: Verificar Conexión
-
-En ambas instancias, ejecutar en consola:
-```
-ICE.STATUS
-```
-
-**Resultado esperado:**
-```
-=== ICE Connection Status ===
-Connected: Yes
-Local Candidates: 3
-  candidate:1 1 UDP 2130706431 192.168.1.100 5000 typ host
-  candidate:2 1 UDP 1694498815 203.0.113.45 5001 typ srflx
-Remote Peer: 192.168.1.101:5000
-=============================
-```
-
-### Escenario 2: Dos Máquinas en la Misma Red
-
-#### Configuración de Red Compartida
-
-Opción A: **Carpeta Compartida Windows**
-```
-1. En Host: Compartir carpeta Saved/ICESignaling
-2. En Cliente: Mapear unidad de red o usar UNC path
-3. Configurar ambos para usar la misma ruta
-```
-
-Opción B: **Sincronización en Tiempo Real**
-```
-1. Usar Dropbox/Google Drive/OneDrive
-2. Ambas máquinas sincronizando la misma carpeta
-3. Puede tener latencia de 1-2 segundos
-```
-
-#### Ejecutar el Test
-
-1. **Host (Máquina A):**
-   - Crear sesión como en Escenario 1
-   - Verificar que archivos .json aparecen en ICESignaling/
-
-2. **Cliente (Máquina B):**
-   - Buscar y unirse a sesión
-   - Verificar que puede leer archivos del host
-   - Verificar que escribe sus propios archivos
-
-3. **Verificar Conexión:**
-   - Usar `ICE.STATUS` en ambas máquinas
-   - Verificar logs para mensajes "Received signal"
+Este es solo un ejemplo simple. Para producción, considera usar HTTP REST, WebSocket u otro mecanismo de señalización robusto.
 
 ## Comandos de Consola Útiles
-
-### Ver Estado de Señalización
-```
-ICE.SIGNALING
-```
-Muestra:
-- Tipo de señalización activa
-- Directorio usado
-- Estado de conexión
 
 ### Ver Candidatos Locales
 ```
@@ -205,32 +230,31 @@ LogOnlineICE: Gathered 0 ICE candidates for session
 3. Probar servidor STUN alternativo en config
 4. Verificar firewall/antivirus
 
-### Problema: "Signal not received"
+### Problema: "Candidates not exchanged"
 
 **Síntomas:**
 ```
-LogOnlineICE: Sent 3 candidates for session GameSession
-(No mensaje "Received signal" en el otro cliente)
+LogOnlineICE: Gathered 3 ICE candidates for session
+(Los candidatos no llegan al peer remoto)
 ```
 
 **Soluciones:**
-1. Verificar que ambos clientes usan el mismo directorio
-2. Verificar permisos de lectura/escritura en directorio
-3. Verificar sincronización si usas carpeta compartida
-4. Esperar unos segundos (sincronización puede tardar)
-5. Verificar logs para errores de archivo
+1. Verificar que el delegado `OnLocalCandidatesReady` está vinculado correctamente
+2. Verificar que la lógica de señalización está enviando los candidatos
+3. Verificar que el peer remoto está llamando a `AddRemoteICECandidate()`
+4. Verificar logs en ambos lados para diagnosticar el problema
+5. Para testing rápido, usar comandos de consola manuales
 
 ### Problema: "Connectivity checks not starting"
 
 **Síntomas:**
 ```
-LogOnlineICE: Received signal from <PeerId>: Type=0, Candidates=3
-(No se inician checks automáticamente)
+(Los candidatos están agregados pero no se inician checks)
 ```
 
 **Soluciones:**
 1. Ejecutar manualmente: `ICE.STARTCHECKS`
-2. Verificar que ambos lados tienen candidatos remotos
+2. Verificar que ambos lados tienen candidatos locales Y remotos
 3. Revisar logs para errores de ICE agent
 
 ### Problema: "Connection failed"
@@ -265,88 +289,99 @@ log LogNet Verbose
 
 ## Arquitectura del Sistema
 
-### Flujo de Señalización
+### Flujo de Señalización con Delegados
 
 ```
 [Host Crea Sesión]
     ↓
 [Recopila Candidatos ICE]
     ↓
-[Escribe signal_*.json] ← Directorio Compartido
-    ↓                                    ↓
-[Cliente Lee Archivo] ← [Tick Procesa Señales]
+[OnLocalCandidatesReady se dispara] ← Delegado
     ↓
-[Agrega Candidatos Remotos]
+[Tu código envía candidatos al peer remoto]
+    (HTTP, WebSocket, archivo, etc.)
     ↓
-[Envía Respuesta (Answer)]
+[Peer remoto recibe candidatos]
     ↓
-[Host Recibe Answer]
+[Peer llama AddRemoteICECandidate()]
     ↓
-[Ambos Inician Connectivity Checks]
+[OnRemoteCandidateReceived se dispara] ← Delegado
+    ↓
+[El mismo proceso ocurre en dirección inversa]
+    ↓
+[Ambos tienen candidatos locales y remotos]
+    ↓
+[Ejecutar ICE.STARTCHECKS o llamar StartICEConnectivityChecks()]
     ↓
 [Conexión P2P Establecida] ✅
 ```
 
-### Formato de Mensajes
+## Ventajas del Nuevo Sistema
 
-Los archivos de señalización usan formato JSON:
+1. **Flexibilidad**: Implementa cualquier mecanismo de señalización
+2. **Sin Dependencias**: No requiere JSON ni archivos
+3. **Rendimiento**: Sin overhead de serialización o I/O de archivos
+4. **Estilo Unreal**: Usa delegados multicast nativos de Unreal
+5. **Testing Simple**: Comandos de consola para intercambio manual
 
-```json
+## Ejemplos de Implementación de Señalización
+
+### Ejemplo 1: HTTP REST API
+
+```cpp
+void MySignalingService::Initialize(FOnlineSessionICE* SessionICE)
 {
-  "type": "offer",
-  "sessionId": "GameSession",
-  "senderId": "A1B2C3D4-...",
-  "receiverId": "",
-  "timestamp": "2025-11-04T10:30:45.123Z",
-  "candidates": [
+    SessionICE->OnLocalCandidatesReady.AddLambda([this](FName SessionName, const TArray<FICECandidate>& Candidates)
     {
-      "foundation": "1",
-      "componentId": 1,
-      "transport": "UDP",
-      "priority": 2130706431,
-      "address": "192.168.1.100",
-      "port": 5000,
-      "type": "host"
-    }
-  ],
-  "metadata": {}
+        // Serializar candidatos a JSON
+        TSharedPtr<FJsonObject> JsonObject = MakeShared<FJsonObject>();
+        JsonObject->SetStringField(TEXT("sessionName"), SessionName.ToString());
+        
+        TArray<TSharedPtr<FJsonValue>> CandidatesArray;
+        for (const FICECandidate& Candidate : Candidates)
+        {
+            CandidatesArray.Add(MakeShared<FJsonValueString>(Candidate.ToString()));
+        }
+        JsonObject->SetArrayField(TEXT("candidates"), CandidatesArray);
+        
+        // Enviar a servidor REST
+        TSharedRef<IHttpRequest> Request = FHttpModule::Get().CreateRequest();
+        Request->SetURL(TEXT("http://myserver.com/api/ice/candidates"));
+        Request->SetVerb(TEXT("POST"));
+        Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+        
+        FString JsonString;
+        TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
+        FJsonSerializer::Serialize(JsonObject.ToSharedRef(), Writer);
+        Request->SetContentAsString(JsonString);
+        
+        Request->ProcessRequest();
+    });
 }
 ```
 
-## Limitaciones Actuales
-
-1. **Directorio Compartido**: Requiere acceso a mismo directorio
-2. **Sin Servidor**: No hay servidor centralizado de matchmaking
-3. **Latencia de Archivo**: Sincronización puede tomar 1-2 segundos
-4. **Limpieza Manual**: Archivos antiguos se limpian automáticamente (5 min)
-
-## Roadmap Futuro
-
-### Version 2.1 (Próxima)
-- Señalización HTTP/REST
-- Servidor de señalización de referencia
-- Discovery automático en LAN
-
-### Version 3.0 (Planeada)
-- WebSocket signaling
-- Matchmaking con servidor
-- DTLS encryption
-
-## Ejemplos de Código Completos
-
-### Host (C++)
+### Ejemplo 2: WebSocket
 
 ```cpp
-void AMyGameMode::CreateAndHostSession()
+void MyWebSocketSignaling::Initialize(FOnlineSessionICE* SessionICE)
 {
-    IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get();
-    if (!OnlineSub) return;
+    SessionICE->OnLocalCandidatesReady.AddLambda([this](FName SessionName, const TArray<FICECandidate>& Candidates)
+    {
+        for (const FICECandidate& Candidate : Candidates)
+        {
+            FString Message = FString::Printf(TEXT("{\"type\":\"candidate\",\"session\":\"%s\",\"data\":\"%s\"}"),
+                *SessionName.ToString(), *Candidate.ToString());
+            WebSocket->Send(Message);
+        }
+    });
     
-    IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
-    if (!Sessions.IsValid()) return;
-    
-    // Bind completion delegate
-    Sessions->AddOnCreateSessionCompleteDelegate_Handle(
+    // Al recibir mensaje del WebSocket
+    WebSocket->OnMessage().AddLambda([SessionICE](const FString& Message)
+    {
+        // Parsear y agregar candidato
+        SessionICE->AddRemoteICECandidate(CandidateString);
+    });
+}
         FOnCreateSessionCompleteDelegate::CreateUObject(
             this, &AMyGameMode::OnCreateSessionComplete)
     );
@@ -383,83 +418,19 @@ void AMyGameMode::OnCreateSessionComplete(FName SessionName, bool bWasSuccessful
 }
 ```
 
-### Cliente (C++)
+## Más Ejemplos
 
-```cpp
-void AMyGameMode::FindAndJoinSession()
-{
-    IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get();
-    if (!OnlineSub) return;
-    
-    IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
-    if (!Sessions.IsValid()) return;
-    
-    // Bind delegates
-    Sessions->AddOnFindSessionsCompleteDelegate_Handle(
-        FOnFindSessionsCompleteDelegate::CreateUObject(
-            this, &AMyGameMode::OnFindSessionsComplete)
-    );
-    
-    // Create search settings
-    SessionSearch = MakeShared<FOnlineSessionSearch>();
-    SessionSearch->MaxSearchResults = 10;
-    SessionSearch->bIsLanQuery = false;
-    
-    // Start search
-    Sessions->FindSessions(0, SessionSearch.ToSharedRef());
-}
-
-void AMyGameMode::OnFindSessionsComplete(bool bWasSuccessful)
-{
-    if (!bWasSuccessful || SessionSearch->SearchResults.Num() == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("No sessions found"));
-        return;
-    }
-    
-    UE_LOG(LogTemp, Log, TEXT("Found %d sessions"), SessionSearch->SearchResults.Num());
-    
-    // Join first session
-    IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get();
-    if (OnlineSub)
-    {
-        IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
-        if (Sessions.IsValid())
-        {
-            Sessions->AddOnJoinSessionCompleteDelegate_Handle(
-                FOnJoinSessionCompleteDelegate::CreateUObject(
-                    this, &AMyGameMode::OnJoinSessionComplete)
-            );
-            
-            // Join session - candidates are automatically exchanged
-            Sessions->JoinSession(0, FName("MyJoinedSession"), SessionSearch->SearchResults[0]);
-        }
-    }
-}
-
-void AMyGameMode::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCompleteResult::Type Result)
-{
-    if (Result == EOnJoinSessionCompleteResult::Success)
-    {
-        UE_LOG(LogTemp, Log, TEXT("Successfully joined session!"));
-        
-        // Connection will be established automatically via ICE
-        // Wait for OnConnectionStateChanged or check ICE.STATUS
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to join session: %d"), (int32)Result);
-    }
-}
-```
+Para ejemplos completos de código usando sesiones, ver:
+- [EXAMPLES.md](EXAMPLES.md) - Ejemplos de uso de las interfaces de sesión
+- [TESTING_GUIDE.md](TESTING_GUIDE.md) - Guía completa de testing manual
 
 ## Preguntas Frecuentes
 
 **P: ¿Funciona en diferentes plataformas?**
-R: Sí, siempre que tengan acceso al mismo directorio de señalización.
+R: Sí, funciona en Windows, Linux y Mac siempre que implementes tu mecanismo de señalización.
 
-**P: ¿Puedo usar esto en producción?**
-R: La señalización por archivos es solo para testing. Para producción, implementa un servidor de señalización HTTP/WebSocket.
+**P: ¿Cómo implemento señalización en producción?**
+R: Usa HTTP REST API, WebSocket o cualquier protocolo que prefieras. El sistema te da la flexibilidad de elegir.
 
 **P: ¿Cuántos clientes pueden conectarse?**
 R: Depende de la configuración de `NumPublicConnections` en session settings.
@@ -467,11 +438,11 @@ R: Depende de la configuración de `NumPublicConnections` en session settings.
 **P: ¿Funciona a través de Internet?**
 R: Sí, si:
 1. STUN descubre IP pública correctamente
-2. Directorio de señalización es accesible (ej: via Dropbox)
+2. Tu mecanismo de señalización funciona a través de Internet
 3. NAT permite conexiones P2P (usa TURN si no)
 
-**P: ¿Puedo desactivar la señalización automática?**
-R: Sí, los comandos manuales (`ICE.SETREMOTEPEER`, etc.) siguen funcionando.
+**P: ¿Puedo usar comandos manuales para testing rápido?**
+R: Sí, los comandos manuales (`ICE.LISTCANDIDATES`, `ICE.ADDCANDIDATE`, etc.) siguen disponibles para testing.
 
 ## Soporte
 

@@ -2,6 +2,37 @@
 
 All notable changes to OnlineSubsystemICE will be documented in this file.
 
+## [2.2.0] - 2025-11-04
+
+### Changed
+
+#### Simplified Signaling Architecture
+- **Removed ICESignalingInterface**: Eliminated abstract signaling interface for simpler, more direct approach
+  - Removed `IICESignaling` abstract interface
+  - Removed `FLocalFileSignaling` implementation
+  - Removed `FICESignalMessage` struct and JSON serialization
+  - Removed file-based signaling system
+  - Removed JSON and JsonUtilities dependencies from Build.cs
+
+#### Direct Delegate-Based Communication
+- **Added Multicast Delegates**: Replaced signaling interface with Unreal-style delegates
+  - `FOnLocalCandidatesReady`: Broadcasts when local ICE candidates are ready
+  - `FOnRemoteCandidateReceived`: Broadcasts when remote candidates are received
+  - Applications bind to these delegates to implement their own signaling mechanism
+
+#### Benefits
+- **Simpler Architecture**: Direct delegate pattern aligns with Unreal Engine methodology
+- **More Flexible**: Applications can implement any signaling mechanism they need
+- **Reduced Dependencies**: No JSON processing or file I/O for signaling
+- **Better Performance**: No file system overhead or JSON parsing
+- **Cleaner Code**: Removed ~350 lines of signaling infrastructure code
+
+### Migration Guide
+Applications previously using the automatic file-based signaling should:
+1. Bind to `OnLocalCandidatesReady` delegate to receive local candidates
+2. Send candidates to remote peer using your preferred method (network, REST API, WebSocket, etc.)
+3. Call `AddRemoteICECandidate()` when receiving candidates from remote peer
+
 ## [2.1.0] - 2025-11-04
 
 ### Added

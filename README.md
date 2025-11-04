@@ -16,7 +16,8 @@ OnlineSubsystemICE provides an alternative to proprietary online subsystems like
 - ✅ **OnlineSubsystem Integration**: Compatible with Unreal Engine's IOnlineSession and IOnlineIdentity interfaces
 - ✅ **Multi-platform**: Windows, Linux, and Mac support
 - ✅ **Configurable**: Easy-to-configure STUN/TURN servers
-- ✅ **Testing Console Commands**: Manual signaling commands for local testing without signaling server
+- ✅ **Delegate-Based Signaling**: Unreal-style multicast delegates for candidate exchange
+- ✅ **Testing Console Commands**: Manual signaling commands for local testing
 
 ## Installation
 
@@ -143,8 +144,10 @@ void OnFindSessionsComplete(bool bWasSuccessful)
    - Relayed candidates (via TURN, if configured)
 
 2. **Candidate Exchange**: 
+   - Bind to `OnLocalCandidatesReady` delegate to receive local candidates
+   - Send candidates to remote peer using your preferred method (REST API, WebSocket, etc.)
+   - Call `AddRemoteICECandidate()` when receiving candidates from remote peer
    - For testing: Use console commands for manual signaling (see TESTING_GUIDE.md)
-   - For production: Implement signaling server or use manual commands
 
 3. **Connectivity Checks**:
    - STUN binding requests between candidate pairs
@@ -153,34 +156,41 @@ void OnFindSessionsComplete(bool bWasSuccessful)
 4. **Connection Establishment**:
    - Once a candidate pair succeeds, data can be transmitted
 
-### Local Testing with Automatic Signaling
+### Implementing Candidate Exchange
 
-OnlineSubsystemICE now includes **automatic file-based signaling** for local testing:
+OnlineSubsystemICE uses **Unreal Engine's delegate pattern** for candidate exchange:
 
-- ✅ **Automatic candidate exchange** between clients
-- ✅ **No manual console commands required** for basic connectivity
-- ✅ **Shared directory signaling** (Saved/ICESignaling)
-- ✅ **Backward compatible** with manual commands
+```cpp
+// Get session interface
+IOnlineSessionPtr SessionInterface = OnlineSubsystem->GetSessionInterface();
+FOnlineSessionICE* SessionICE = static_cast<FOnlineSessionICE*>(SessionInterface.Get());
 
-**Quick Test (Two Instances):**
-1. Instance A: Create session
-2. Instance B: Find and join session
-3. ✅ Candidates automatically exchanged, connection established!
+// Bind to local candidates ready event
+SessionICE->OnLocalCandidatesReady.AddLambda([](FName SessionName, const TArray<FICECandidate>& Candidates)
+{
+    // Send candidates to remote peer using your signaling method
+    // Examples: REST API call, WebSocket message, custom network protocol
+    for (const FICECandidate& Candidate : Candidates)
+    {
+        MySignalingService->SendCandidate(SessionName, Candidate.ToString());
+    }
+});
 
-See [LOCAL_TESTING_GUIDE.md](LOCAL_TESTING_GUIDE.md) for detailed local testing workflows.
+// When receiving candidates from remote peer
+SessionICE->AddRemoteICECandidate(CandidateString);
+```
 
-**Manual Commands (Optional):**
+**Testing Commands:**
 ```
 ICE.SETREMOTEPEER <ip> <port>     - Set remote peer address
 ICE.ADDCANDIDATE <candidate>      - Add remote ICE candidate
 ICE.LISTCANDIDATES                - List local ICE candidates
 ICE.STARTCHECKS                   - Start connectivity checks
 ICE.STATUS                        - Show connection status
-ICE.SIGNALING                     - Show signaling status
 ICE.HELP                          - Show all commands
 ```
 
-See [TESTING_GUIDE.md](TESTING_GUIDE.md) for manual testing workflows.
+See [TESTING_GUIDE.md](TESTING_GUIDE.md) for detailed testing workflows.
 
 ## STUN Servers
 

@@ -9,7 +9,18 @@
 
 class FOnlineSubsystemICE;
 
+/**
+ * Delegate for local ICE candidates ready notification
+ * Params: SessionName, Candidates
+ */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnLocalCandidatesReady, FName, const TArray<struct FICECandidate>&);
 
+/**
+ * Delegate for remote ICE candidate received notification
+ * This allows external systems to be notified when candidates are received
+ * Params: SessionName, Candidate
+ */
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnRemoteCandidateReceived, FName, const struct FICECandidate&);
 
 /**
  * Session interface implementation for ICE
@@ -95,6 +106,18 @@ public:
 	 */
 	void DumpICEStatus(FOutputDevice& Ar);
 
+	/**
+	 * Delegate called when local ICE candidates are ready
+	 * Applications can bind to this to send candidates to remote peers
+	 */
+	FOnLocalCandidatesReady OnLocalCandidatesReady;
+
+	/**
+	 * Delegate called when a remote candidate is received
+	 * Applications can bind to this to monitor candidate reception
+	 */
+	FOnRemoteCandidateReceived OnRemoteCandidateReceived;
+
 private:
 	/** Reference to the main subsystem */
 	FOnlineSubsystemICE* Subsystem;
@@ -108,16 +131,7 @@ private:
 	/** ICE agent for P2P connectivity */
 	TSharedPtr<class FICEAgent> ICEAgent;
 
-	/** Signaling interface for candidate exchange */
-	TSharedPtr<class IICESignaling> SignalingInterface;
-
 	/** Remote peer address for manual signaling */
 	FString RemotePeerIP;
 	int32 RemotePeerPort;
-
-	/** Handle received signaling messages */
-	void OnSignalReceived(const struct FICESignalMessage& Message);
-
-	/** Send local candidates via signaling */
-	void SendLocalCandidates(const FString& SessionId, const FString& ReceiverId);
 };
