@@ -560,7 +560,7 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 
 		// Calculate HMAC-SHA1 for MESSAGE-INTEGRITY
 		// According to RFC 5389 Section 15.4, the length field is adjusted to point to 
-		// the MESSAGE-INTEGRITY attribute itself before calculating HMAC
+		// the end of MESSAGE-INTEGRITY attribute before calculating HMAC
 		int32 MessageLengthForIntegrity = MessageIntegrityOffset - 20 + STUNConstants::MESSAGE_INTEGRITY_ATTR_SIZE;
 		TURNRequest[LengthOffset] = (MessageLengthForIntegrity >> 8) & 0xFF;
 		TURNRequest[LengthOffset + 1] = MessageLengthForIntegrity & 0xFF;
@@ -570,10 +570,11 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 		uint8 KeyMD5[16];
 		CalculateMD5(KeyString, KeyMD5);
 
-		// Calculate HMAC-SHA1 over the message including header with adjusted length,
-		// up to but not including the MESSAGE-INTEGRITY value itself
+		// Calculate HMAC-SHA1 over the message from the STUN header up to (and including)
+		// the attribute preceding MESSAGE-INTEGRITY, which means excluding MESSAGE-INTEGRITY itself
+		// RFC 5389 Section 15.4: "from the STUN header up to, and including, the attribute preceding MESSAGE-INTEGRITY"
 		uint8 HMAC[20];
-		CalculateHMACSHA1(TURNRequest.GetData(), MessageIntegrityOffset + 4, KeyMD5, 16, HMAC);
+		CalculateHMACSHA1(TURNRequest.GetData(), MessageIntegrityOffset, KeyMD5, 16, HMAC);
 		
 		// Copy HMAC to MESSAGE-INTEGRITY attribute
 		for (int32 i = 0; i < 20; i++)
