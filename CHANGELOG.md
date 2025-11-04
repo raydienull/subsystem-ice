@@ -2,6 +2,78 @@
 
 All notable changes to OnlineSubsystemICE will be documented in this file.
 
+## [2.1.0] - 2025-11-04
+
+### Added
+
+#### Automatic Signaling System
+- **File-Based Signaling**: Implemented `IICESignaling` interface with `FLocalFileSignaling`
+  - Automatic candidate exchange without manual console commands
+  - JSON-based message format for cross-platform compatibility
+  - Shared directory signaling (ProjectSaved/ICESignaling)
+  - Automatic message cleanup (5 minute timeout)
+  - Peer ID generation for message routing
+  
+#### Enhanced Session Workflow
+- **Automatic Offer Broadcast**: `CreateSession` now automatically broadcasts ICE candidates
+- **Automatic Answer Response**: `JoinSession` automatically sends answer with candidates
+- **Signal Processing**: Integrated signaling message processing in session Tick
+- **Connection Handler**: Automatic ICE connectivity checks when receiving remote candidates
+
+#### Developer Experience
+- **Simplified Testing**: Create → Join → Connected workflow
+- **New Console Command**: `ICE.SIGNALING` to show signaling status
+- **Updated Help**: `ICE.HELP` now shows automatic signaling info
+- **Backward Compatible**: Manual commands still work for advanced scenarios
+
+#### Documentation
+- **LOCAL_TESTING_GUIDE.md**: Comprehensive guide for local testing with automatic signaling
+  - Two-instance testing workflows
+  - Shared folder setup for multi-machine testing
+  - Complete troubleshooting section
+  - Code examples for C++ and Blueprint
+- **Updated README.md**: Added automatic signaling features
+- **Updated CHANGELOG.md**: Version 2.1 features documented
+
+### Changed
+- Session interface now initializes signaling on construction
+- Tick function now processes signaling messages
+- Console help updated to reflect automatic features
+
+### Technical Details
+
+#### Architecture
+- Clean separation: Signaling interface is independent of ICE agent
+- Extensible: Easy to add HTTP/WebSocket signaling implementations
+- Thread-safe: Proper locking for concurrent access
+- Performance: Minimal overhead, processes signals only when needed
+
+#### File Format
+```json
+{
+  "type": "offer|answer|candidate",
+  "sessionId": "SessionName",
+  "senderId": "PeerGUID",
+  "receiverId": "TargetPeerGUID",
+  "candidates": [...],
+  "metadata": {},
+  "timestamp": "ISO8601"
+}
+```
+
+### Migration Notes
+
+No breaking changes. Existing code continues to work without modifications.
+
+**To use automatic signaling:**
+1. No code changes needed - it works automatically
+2. Sessions will exchange candidates on create/join
+3. Manual commands still available if needed
+
+**To disable automatic signaling:**
+- Use manual commands exclusively
+- System falls back gracefully if signaling unavailable
+
 ## [2.0.0] - 2025-11-03
 
 ### Added

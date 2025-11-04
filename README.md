@@ -153,20 +153,34 @@ void OnFindSessionsComplete(bool bWasSuccessful)
 4. **Connection Establishment**:
    - Once a candidate pair succeeds, data can be transmitted
 
-### Testing Without Signaling Server
+### Local Testing with Automatic Signaling
 
-OnlineSubsystemICE includes console commands for manual testing:
+OnlineSubsystemICE now includes **automatic file-based signaling** for local testing:
 
+- ✅ **Automatic candidate exchange** between clients
+- ✅ **No manual console commands required** for basic connectivity
+- ✅ **Shared directory signaling** (Saved/ICESignaling)
+- ✅ **Backward compatible** with manual commands
+
+**Quick Test (Two Instances):**
+1. Instance A: Create session
+2. Instance B: Find and join session
+3. ✅ Candidates automatically exchanged, connection established!
+
+See [LOCAL_TESTING_GUIDE.md](LOCAL_TESTING_GUIDE.md) for detailed local testing workflows.
+
+**Manual Commands (Optional):**
 ```
 ICE.SETREMOTEPEER <ip> <port>     - Set remote peer address
 ICE.ADDCANDIDATE <candidate>      - Add remote ICE candidate
 ICE.LISTCANDIDATES                - List local ICE candidates
 ICE.STARTCHECKS                   - Start connectivity checks
 ICE.STATUS                        - Show connection status
+ICE.SIGNALING                     - Show signaling status
 ICE.HELP                          - Show all commands
 ```
 
-See [TESTING_GUIDE.md](TESTING_GUIDE.md) for complete testing workflows.
+See [TESTING_GUIDE.md](TESTING_GUIDE.md) for manual testing workflows.
 
 ## STUN Servers
 
@@ -196,6 +210,13 @@ TURNCredential=mypassword
 
 ## Recent Updates
 
+### Version 2.1 Features (Current)
+
+- ✅ **Automatic Signaling**: File-based signaling for local testing
+- ✅ **Automatic Candidate Exchange**: No manual commands needed
+- ✅ **Simplified Testing**: Create session → Join session → Connected!
+- ✅ **Backward Compatible**: Manual commands still work
+
 ### Version 2.0 Features
 
 - ✅ **Basic Matchmaking**: Create-or-join matchmaking behavior implemented
@@ -207,14 +228,15 @@ TURNCredential=mypassword
 - ✅ **Improved Connection Strings**: Meaningful ICE URIs with connection details
 - ✅ **Better Error Handling**: Comprehensive validation and logging
 
-See [IMPLEMENTATION.md](IMPLEMENTATION.md) for detailed documentation of all features.
+See [IMPLEMENTATION.md](IMPLEMENTATION.md) and [LOCAL_TESTING_GUIDE.md](LOCAL_TESTING_GUIDE.md) for detailed documentation.
 
 ## Limitations & Future Work
 
-- ⚠️ **Signaling**: Currently requires manual candidate exchange. A signaling server implementation is needed for production use
+- ✅ **Local Signaling**: File-based signaling now available for local/LAN testing
+- ⚠️ **Production Signaling**: HTTP/WebSocket signaling server needed for production deployment
 - ⚠️ **TURN**: Basic TURN implementation - full RFC 5766 compliance is in progress
 - ⚠️ **Security**: Consider implementing DTLS for encrypted P2P communication
-- ⚠️ **Advanced Matchmaking**: Skill-based and region-based matchmaking requires signaling server integration
+- ⚠️ **Advanced Matchmaking**: Skill-based and region-based matchmaking requires dedicated signaling server
 
 ## Debugging
 
