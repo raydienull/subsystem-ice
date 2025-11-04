@@ -5,6 +5,9 @@
 #include "OnlineIdentityInterfaceICE.h"
 #include "Misc/ConfigCacheIni.h"
 
+// Default number of public connections for ICE cheat commands
+static constexpr int32 ICE_DEFAULT_MAX_PLAYERS = 4;
+
 FOnlineSubsystemICE::FOnlineSubsystemICE(FName InInstanceName)
 	: FOnlineSubsystemImpl(TEXT("ICE"), InInstanceName)
 	, SessionInterface(nullptr)
@@ -86,7 +89,7 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 				
 				// Create session settings
 				FOnlineSessionSettings SessionSettings;
-				SessionSettings.NumPublicConnections = 4;
+				SessionSettings.NumPublicConnections = ICE_DEFAULT_MAX_PLAYERS;
 				SessionSettings.bShouldAdvertise = true;
 				SessionSettings.bAllowJoinInProgress = true;
 				SessionSettings.bIsLANMatch = false;
@@ -94,7 +97,7 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 				SessionSettings.bAllowInvites = true;
 				
 				// Bind to completion delegate with self-cleanup
-				FDelegateHandle* DelegateHandlePtr = new FDelegateHandle();
+				TSharedPtr<FDelegateHandle> DelegateHandlePtr = MakeShared<FDelegateHandle>();
 				*DelegateHandlePtr = SessionInterface->OnCreateSessionCompleteDelegates.AddLambda([SessionNameStr, DelegateHandlePtr](FName InSessionName, bool bWasSuccessful)
 				{
 					if (bWasSuccessful)
@@ -132,7 +135,7 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 							}
 						}
 					}
-					delete DelegateHandlePtr;
+					// DelegateHandlePtr will be automatically cleaned up by TSharedPtr
 				});
 				
 				// Create the session
@@ -175,7 +178,7 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 				
 				// Create a mock search result for joining
 				FOnlineSessionSearchResult SearchResult;
-				SearchResult.Session.SessionSettings.NumPublicConnections = 4;
+				SearchResult.Session.SessionSettings.NumPublicConnections = ICE_DEFAULT_MAX_PLAYERS;
 				SearchResult.Session.SessionSettings.bShouldAdvertise = true;
 				SearchResult.Session.SessionSettings.bAllowJoinInProgress = true;
 				SearchResult.Session.SessionSettings.bIsLANMatch = false;
@@ -183,7 +186,7 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 				SearchResult.Session.SessionSettings.bAllowInvites = true;
 				
 				// Bind to completion delegate with self-cleanup
-				FDelegateHandle* DelegateHandlePtr = new FDelegateHandle();
+				TSharedPtr<FDelegateHandle> DelegateHandlePtr = MakeShared<FDelegateHandle>();
 				*DelegateHandlePtr = SessionInterface->OnJoinSessionCompleteDelegates.AddLambda([SessionNameStr, DelegateHandlePtr](FName InSessionName, EOnJoinSessionCompleteResult::Type Result)
 				{
 					if (Result == EOnJoinSessionCompleteResult::Success)
@@ -219,7 +222,7 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 							}
 						}
 					}
-					delete DelegateHandlePtr;
+					// DelegateHandlePtr will be automatically cleaned up by TSharedPtr
 				});
 				
 				// Join the session
