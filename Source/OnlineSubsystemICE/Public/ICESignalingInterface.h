@@ -6,42 +6,42 @@
 #include "ICEAgent.h"
 
 /**
- * Tipos de mensaje de señalización ICE
+ * ICE signaling message types
  */
 enum class EICESignalType : uint8
 {
-	/** Oferta de sesión (candidatos del host) */
+	/** Session offer (host candidates) */
 	Offer,
-	/** Respuesta de sesión (candidatos del cliente) */
+	/** Session answer (client candidates) */
 	Answer,
-	/** Candidato ICE individual */
+	/** Individual ICE candidate */
 	Candidate
 };
 
 /**
- * Mensaje de señalización ICE
+ * ICE signaling message
  */
 struct FICESignalMessage
 {
-	/** Tipo de mensaje */
+	/** Message type */
 	EICESignalType Type;
 	
-	/** ID de sesión */
+	/** Session ID */
 	FString SessionId;
 	
-	/** ID del remitente */
+	/** Sender peer ID */
 	FString SenderId;
 	
-	/** ID del destinatario (vacío para broadcast) */
+	/** Receiver peer ID (empty for broadcast) */
 	FString ReceiverId;
 	
-	/** Candidatos ICE */
+	/** ICE candidates */
 	TArray<FICECandidate> Candidates;
 	
-	/** Datos adicionales del mensaje */
+	/** Additional message metadata */
 	TMap<FString, FString> Metadata;
 	
-	/** Timestamp del mensaje */
+	/** Message timestamp */
 	FDateTime Timestamp;
 	
 	FICESignalMessage()
@@ -49,21 +49,21 @@ struct FICESignalMessage
 		, Timestamp(FDateTime::UtcNow())
 	{}
 	
-	/** Convierte el mensaje a JSON */
+	/** Convert message to JSON */
 	FString ToJson() const;
 	
-	/** Crea un mensaje desde JSON */
+	/** Create message from JSON */
 	static FICESignalMessage FromJson(const FString& JsonString);
 };
 
 /**
- * Delegate para notificar cuando se recibe un mensaje de señalización
+ * Delegate for signaling message received notifications
  */
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnSignalMessageReceived, const FICESignalMessage&);
 
 /**
- * Interfaz abstracta para mecanismos de señalización ICE
- * Permite intercambiar candidatos entre peers
+ * Abstract interface for ICE signaling mechanisms
+ * Allows candidate exchange between peers
  */
 class IICESignaling
 {
@@ -71,50 +71,50 @@ public:
 	virtual ~IICESignaling() = default;
 	
 	/**
-	 * Inicializar el sistema de señalización
-	 * @return True si la inicialización fue exitosa
+	 * Initialize the signaling system
+	 * @return True if initialization was successful
 	 */
 	virtual bool Initialize() = 0;
 	
 	/**
-	 * Cerrar el sistema de señalización
+	 * Shutdown the signaling system
 	 */
 	virtual void Shutdown() = 0;
 	
 	/**
-	 * Enviar un mensaje de señalización
-	 * @param Message - Mensaje a enviar
-	 * @return True si el envío fue exitoso
+	 * Send a signaling message
+	 * @param Message - Message to send
+	 * @return True if send was successful
 	 */
 	virtual bool SendSignal(const FICESignalMessage& Message) = 0;
 	
 	/**
-	 * Procesar mensajes de señalización pendientes
-	 * Debe llamarse periódicamente (tick)
+	 * Process pending signaling messages
+	 * Should be called periodically (tick)
 	 */
 	virtual void ProcessSignals() = 0;
 	
 	/**
-	 * Verificar si el sistema de señalización está activo
-	 * @return True si está conectado/activo
+	 * Check if signaling system is active
+	 * @return True if connected/active
 	 */
 	virtual bool IsActive() const = 0;
 	
 	/**
-	 * Obtener el ID único de este peer
-	 * @return ID del peer local
+	 * Get unique ID of this peer
+	 * @return Local peer ID
 	 */
 	virtual FString GetLocalPeerId() const = 0;
 	
 	/**
-	 * Registrar callback para mensajes recibidos
+	 * Register callback for received messages
 	 */
 	FOnSignalMessageReceived OnSignalReceived;
 };
 
 /**
- * Implementación de señalización basada en archivos locales
- * Útil para testing local sin necesidad de servidor
+ * File-based signaling implementation for local testing
+ * Useful for local testing without a signaling server
  */
 class FLocalFileSignaling : public IICESignaling
 {
@@ -131,27 +131,27 @@ public:
 	virtual FString GetLocalPeerId() const override;
 	
 private:
-	/** Directorio compartido para archivos de señalización */
+	/** Shared directory for signaling files */
 	FString SignalingDirectory;
 	
-	/** ID único de este peer */
+	/** Unique ID of this peer */
 	FString PeerId;
 	
-	/** Índice del último mensaje procesado */
+	/** Index of last processed message */
 	int32 LastProcessedMessageIndex;
 	
-	/** Si el sistema está activo */
+	/** Whether system is active */
 	bool bIsActive;
 	
-	/** Crear directorio de señalización si no existe */
+	/** Create signaling directory if it doesn't exist */
 	bool EnsureSignalingDirectory();
 	
-	/** Generar nombre de archivo para mensaje */
+	/** Generate file name for message */
 	FString GenerateMessageFileName() const;
 	
-	/** Leer mensajes desde archivos */
+	/** Read messages from files */
 	TArray<FICESignalMessage> ReadPendingMessages();
 	
-	/** Limpiar mensajes antiguos */
+	/** Cleanup old messages */
 	void CleanupOldMessages();
 };

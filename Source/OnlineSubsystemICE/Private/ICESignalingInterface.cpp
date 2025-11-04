@@ -10,17 +10,17 @@
 #include "Serialization/JsonWriter.h"
 #include "Misc/Guid.h"
 
-// Conversión de FICESignalMessage a JSON
+// Convert FICESignalMessage to JSON
 FString FICESignalMessage::ToJson() const
 {
 	TSharedPtr<FJsonObject> JsonObject = MakeShared<FJsonObject>();
 	
-	// Tipo de mensaje
+	// Message type
 	JsonObject->SetStringField(TEXT("type"), 
 		Type == EICESignalType::Offer ? TEXT("offer") :
 		Type == EICESignalType::Answer ? TEXT("answer") : TEXT("candidate"));
 	
-	// IDs
+	// Session and peer IDs
 	JsonObject->SetStringField(TEXT("sessionId"), SessionId);
 	JsonObject->SetStringField(TEXT("senderId"), SenderId);
 	JsonObject->SetStringField(TEXT("receiverId"), ReceiverId);
@@ -28,7 +28,7 @@ FString FICESignalMessage::ToJson() const
 	// Timestamp
 	JsonObject->SetStringField(TEXT("timestamp"), Timestamp.ToIso8601());
 	
-	// Candidatos
+	// Candidates
 	TArray<TSharedPtr<FJsonValue>> CandidatesArray;
 	for (const FICECandidate& Candidate : Candidates)
 	{
@@ -55,7 +55,7 @@ FString FICESignalMessage::ToJson() const
 	}
 	JsonObject->SetObjectField(TEXT("metadata"), MetadataObj);
 	
-	// Serializar a string
+	// Serialize to string
 	FString OutputString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
 	FJsonSerializer::Serialize(JsonObject.ToSharedRef(), Writer);
@@ -63,7 +63,7 @@ FString FICESignalMessage::ToJson() const
 	return OutputString;
 }
 
-// Crear FICESignalMessage desde JSON
+// Create FICESignalMessage from JSON
 FICESignalMessage FICESignalMessage::FromJson(const FString& JsonString)
 {
 	FICESignalMessage Message;
@@ -77,7 +77,7 @@ FICESignalMessage FICESignalMessage::FromJson(const FString& JsonString)
 		return Message;
 	}
 	
-	// Tipo
+	// Type
 	FString TypeStr = JsonObject->GetStringField(TEXT("type"));
 	if (TypeStr == TEXT("offer"))
 	{
@@ -92,7 +92,7 @@ FICESignalMessage FICESignalMessage::FromJson(const FString& JsonString)
 		Message.Type = EICESignalType::Candidate;
 	}
 	
-	// IDs
+	// Session and peer IDs
 	Message.SessionId = JsonObject->GetStringField(TEXT("sessionId"));
 	Message.SenderId = JsonObject->GetStringField(TEXT("senderId"));
 	Message.ReceiverId = JsonObject->GetStringField(TEXT("receiverId"));
@@ -101,7 +101,7 @@ FICESignalMessage FICESignalMessage::FromJson(const FString& JsonString)
 	FString TimestampStr = JsonObject->GetStringField(TEXT("timestamp"));
 	FDateTime::ParseIso8601(*TimestampStr, Message.Timestamp);
 	
-	// Candidatos
+	// Candidates
 	const TArray<TSharedPtr<FJsonValue>>* CandidatesArray;
 	if (JsonObject->TryGetArrayField(TEXT("candidates"), CandidatesArray))
 	{
@@ -150,14 +150,14 @@ FICESignalMessage FICESignalMessage::FromJson(const FString& JsonString)
 	return Message;
 }
 
-// Implementación de FLocalFileSignaling
+// FLocalFileSignaling implementation
 
 FLocalFileSignaling::FLocalFileSignaling(const FString& SharedDirectory)
 	: SignalingDirectory(SharedDirectory)
 	, LastProcessedMessageIndex(0)
 	, bIsActive(false)
 {
-	// Generar ID único para este peer
+	// Generate unique peer ID
 	PeerId = FGuid::NewGuid().ToString();
 }
 
@@ -199,14 +199,14 @@ bool FLocalFileSignaling::SendSignal(const FICESignalMessage& Message)
 		return false;
 	}
 	
-	// Convertir mensaje a JSON
+	// Convert message to JSON
 	FString JsonString = Message.ToJson();
 	
-	// Generar nombre de archivo único
+	// Generate unique file name
 	FString FileName = GenerateMessageFileName();
 	FString FilePath = FPaths::Combine(SignalingDirectory, FileName);
 	
-	// Escribir a archivo
+	// Write to file
 	if (FFileHelper::SaveStringToFile(JsonString, *FilePath))
 	{
 		UE_LOG(LogOnlineICE, Verbose, TEXT("Signal sent: %s (Type: %d)"), *FileName, (int32)Message.Type);
@@ -226,19 +226,19 @@ void FLocalFileSignaling::ProcessSignals()
 		return;
 	}
 	
-	// Leer mensajes pendientes
+	// Read pending messages
 	TArray<FICESignalMessage> Messages = ReadPendingMessages();
 	
-	// Procesar cada mensaje
+	// Process each message
 	for (const FICESignalMessage& Message : Messages)
 	{
-		// Filtrar mensajes propios
+		// Filter own messages
 		if (Message.SenderId == PeerId)
 		{
 			continue;
 		}
 		
-		// Filtrar mensajes dirigidos a otros
+		// Filter messages for others
 		if (!Message.ReceiverId.IsEmpty() && Message.ReceiverId != PeerId)
 		{
 			continue;
@@ -247,11 +247,11 @@ void FLocalFileSignaling::ProcessSignals()
 		UE_LOG(LogOnlineICE, Verbose, TEXT("Signal received from %s (Type: %d, Candidates: %d)"), 
 			*Message.SenderId, (int32)Message.Type, Message.Candidates.Num());
 		
-		// Notificar a listeners
+		// Notify listeners
 		OnSignalReceived.Broadcast(Message);
 	}
 	
-	// Limpiar mensajes antiguos periódicamente
+	// Cleanup old messages periodically
 	CleanupOldMessages();
 }
 
@@ -282,7 +282,7 @@ bool FLocalFileSignaling::EnsureSignalingDirectory()
 
 FString FLocalFileSignaling::GenerateMessageFileName() const
 {
-	// Formato: signal_[timestamp]_[peerId]_[guid].json
+	// Format: signal_[timestamp]_[peerId]_[guid].json
 	FDateTime Now = FDateTime::UtcNow();
 	FString Timestamp = FString::Printf(TEXT("%lld"), Now.ToUnixTimestamp());
 	FString Guid = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
@@ -296,19 +296,19 @@ TArray<FICESignalMessage> FLocalFileSignaling::ReadPendingMessages()
 	
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 	
-	// Listar archivos en el directorio
+	// List files in directory
 	TArray<FString> Files;
 	PlatformFile.FindFiles(Files, *SignalingDirectory, TEXT(".json"));
 	
-	// Ordenar por nombre (que incluye timestamp)
+	// Sort by name (includes timestamp)
 	Files.Sort();
 	
-	// Procesar archivos nuevos
+	// Process new files
 	for (int32 i = LastProcessedMessageIndex; i < Files.Num(); ++i)
 	{
 		FString FilePath = FPaths::Combine(SignalingDirectory, Files[i]);
 		
-		// Leer contenido del archivo
+		// Read file content
 		FString JsonString;
 		if (FFileHelper::LoadFileToString(JsonString, *FilePath))
 		{
@@ -321,7 +321,7 @@ TArray<FICESignalMessage> FLocalFileSignaling::ReadPendingMessages()
 		}
 	}
 	
-	// Actualizar índice
+	// Update index
 	LastProcessedMessageIndex = Files.Num();
 	
 	return Messages;
@@ -329,7 +329,7 @@ TArray<FICESignalMessage> FLocalFileSignaling::ReadPendingMessages()
 
 void FLocalFileSignaling::CleanupOldMessages()
 {
-	// Limpiar mensajes más antiguos de 5 minutos
+	// Cleanup messages older than 5 minutes
 	const double MaxAgeSeconds = 300.0;
 	FDateTime Now = FDateTime::UtcNow();
 	
@@ -342,10 +342,10 @@ void FLocalFileSignaling::CleanupOldMessages()
 	{
 		FString FilePath = FPaths::Combine(SignalingDirectory, FileName);
 		
-		// Obtener tiempo de modificación del archivo
+		// Get file modification time
 		FDateTime ModTime = PlatformFile.GetTimeStamp(*FilePath);
 		
-		// Calcular edad
+		// Calculate age
 		FTimespan Age = Now - ModTime;
 		
 		if (Age.GetTotalSeconds() > MaxAgeSeconds)
