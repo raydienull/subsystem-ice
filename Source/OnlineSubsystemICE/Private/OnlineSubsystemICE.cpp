@@ -64,8 +64,143 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 	// ICE specific console commands for testing and debugging
 	if (FParse::Command(&Cmd, TEXT("ICE")))
 	{
+		// ice host [sessionName] - Host a new game session
+		if (FParse::Command(&Cmd, TEXT("HOST")))
+		{
+			FString SessionNameStr = FParse::Token(Cmd, false);
+			if (SessionNameStr.IsEmpty())
+			{
+				SessionNameStr = TEXT("GameSession");
+			}
+			FName SessionName = FName(*SessionNameStr);
+			
+			if (SessionInterface.IsValid())
+			{
+				// Check if session already exists
+				FNamedOnlineSession* ExistingSession = SessionInterface->GetNamedSession(SessionName);
+				if (ExistingSession)
+				{
+					Ar.Logf(TEXT("ICE.HOST: Session '%s' already exists. Destroy it first."), *SessionNameStr);
+					return true;
+				}
+				
+				// Create session settings
+				FOnlineSessionSettings SessionSettings;
+				SessionSettings.NumPublicConnections = 4;
+				SessionSettings.bShouldAdvertise = true;
+				SessionSettings.bAllowJoinInProgress = true;
+				SessionSettings.bIsLANMatch = false;
+				SessionSettings.bUsesPresence = true;
+				SessionSettings.bAllowInvites = true;
+				
+				// Bind to completion delegate
+				SessionInterface->OnCreateSessionCompleteDelegates.AddLambda([SessionNameStr](FName InSessionName, bool bWasSuccessful)
+				{
+					if (bWasSuccessful)
+					{
+						UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Session '%s' created successfully!"), *SessionNameStr);
+						UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Use ICE.LISTCANDIDATES to see your ICE candidates"));
+						UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Share candidates with remote peer using your signaling method"));
+						
+						// Start the session
+						IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+						if (OnlineSub)
+						{
+							IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+							if (Sessions.IsValid())
+							{
+								Sessions->StartSession(InSessionName);
+							}
+						}
+					}
+					else
+					{
+						UE_LOG(LogOnlineICE, Warning, TEXT("ICE.HOST: Failed to create session '%s'"), *SessionNameStr);
+					}
+				});
+				
+				// Create the session
+				bool bStarted = SessionInterface->CreateSession(0, SessionName, SessionSettings);
+				if (bStarted)
+				{
+					Ar.Logf(TEXT("ICE.HOST: Creating session '%s'..."), *SessionNameStr);
+				}
+				else
+				{
+					Ar.Logf(TEXT("ICE.HOST: Failed to start session creation"));
+				}
+			}
+			else
+			{
+				Ar.Logf(TEXT("ICE.HOST: Session interface not available"));
+			}
+			return true;
+		}
+		// ice join <sessionName> - Join an existing game session
+		else if (FParse::Command(&Cmd, TEXT("JOIN")))
+		{
+			FString SessionNameStr = FParse::Token(Cmd, false);
+			if (SessionNameStr.IsEmpty())
+			{
+				Ar.Logf(TEXT("Usage: ICE JOIN <sessionName>"));
+				return true;
+			}
+			FName SessionName = FName(*SessionNameStr);
+			
+			if (SessionInterface.IsValid())
+			{
+				// Check if session already exists
+				FNamedOnlineSession* ExistingSession = SessionInterface->GetNamedSession(SessionName);
+				if (ExistingSession)
+				{
+					Ar.Logf(TEXT("ICE.JOIN: Session '%s' already exists. Destroy it first."), *SessionNameStr);
+					return true;
+				}
+				
+				// Create a mock search result for joining
+				FOnlineSessionSearchResult SearchResult;
+				SearchResult.Session.SessionSettings.NumPublicConnections = 4;
+				SearchResult.Session.SessionSettings.bShouldAdvertise = true;
+				SearchResult.Session.SessionSettings.bAllowJoinInProgress = true;
+				SearchResult.Session.SessionSettings.bIsLANMatch = false;
+				SearchResult.Session.SessionSettings.bUsesPresence = true;
+				SearchResult.Session.SessionSettings.bAllowInvites = true;
+				
+				// Bind to completion delegate
+				SessionInterface->OnJoinSessionCompleteDelegates.AddLambda([SessionNameStr](FName InSessionName, EOnJoinSessionCompleteResult::Type Result)
+				{
+					if (Result == EOnJoinSessionCompleteResult::Success)
+					{
+						UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Joined session '%s' successfully!"), *SessionNameStr);
+						UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Use ICE.LISTCANDIDATES to see your ICE candidates"));
+						UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Share candidates with remote peer using your signaling method"));
+						UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: After exchanging candidates, use ICE.STARTCHECKS to establish P2P connection"));
+					}
+					else
+					{
+						UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: Failed to join session '%s'"), *SessionNameStr);
+					}
+				});
+				
+				// Join the session
+				bool bStarted = SessionInterface->JoinSession(0, SessionName, SearchResult);
+				if (bStarted)
+				{
+					Ar.Logf(TEXT("ICE.JOIN: Joining session '%s'..."), *SessionNameStr);
+				}
+				else
+				{
+					Ar.Logf(TEXT("ICE.JOIN: Failed to start join session"));
+				}
+			}
+			else
+			{
+				Ar.Logf(TEXT("ICE.JOIN: Session interface not available"));
+			}
+			return true;
+		}
 		// ice setremotepeer <ip> <port> - Manually set remote peer for testing
-		if (FParse::Command(&Cmd, TEXT("SETREMOTEPEER")))
+		else if (FParse::Command(&Cmd, TEXT("SETREMOTEPEER")))
 		{
 			FString IPAddress = FParse::Token(Cmd, false);
 			FString PortStr = FParse::Token(Cmd, false);
@@ -186,6 +321,8 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 		else if (FParse::Command(&Cmd, TEXT("HELP")))
 		{
 			Ar.Logf(TEXT("Available ICE commands:"));
+			Ar.Logf(TEXT("  ICE HOST [sessionName] - Host a new game session (simplified)"));
+			Ar.Logf(TEXT("  ICE JOIN <sessionName> - Join an existing game session (simplified)"));
 			Ar.Logf(TEXT("  ICE SETREMOTEPEER <ip> <port> - Set remote peer address (manual)"));
 			Ar.Logf(TEXT("  ICE ADDCANDIDATE <candidate> - Add remote ICE candidate (manual)"));
 			Ar.Logf(TEXT("  ICE LISTCANDIDATES - List local ICE candidates"));
@@ -194,8 +331,12 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 			Ar.Logf(TEXT("  ICE SIGNALING - Show signaling status"));
 			Ar.Logf(TEXT("  ICE HELP - Show this help"));
 			Ar.Logf(TEXT(""));
-			Ar.Logf(TEXT("Note: Automatic signaling is now enabled. Candidates are"));
-			Ar.Logf(TEXT("automatically exchanged when creating/joining sessions."));
+			Ar.Logf(TEXT("Simplified P2P Testing Workflow:"));
+			Ar.Logf(TEXT("  1. Host: ICE HOST [sessionName]"));
+			Ar.Logf(TEXT("  2. Both: ICE LISTCANDIDATES (share candidates out-of-band)"));
+			Ar.Logf(TEXT("  3. Client: ICE JOIN <sessionName>"));
+			Ar.Logf(TEXT("  4. Both: ICE ADDCANDIDATE <candidate> (for each remote candidate)"));
+			Ar.Logf(TEXT("  5. Both: ICE STARTCHECKS"));
 			return true;
 		}
 		else
