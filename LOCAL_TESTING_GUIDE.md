@@ -184,16 +184,9 @@ void Tick(float DeltaTime)
         SessionICE->AddRemoteICECandidate(CandidateString);
     });
 }
-   - Verificar que archivos .json aparecen en ICESignaling/
+```
 
-2. **Cliente (Máquina B):**
-   - Buscar y unirse a sesión
-   - Verificar que puede leer archivos del host
-   - Verificar que escribe sus propios archivos
-
-3. **Verificar Conexión:**
-   - Usar `ICE.STATUS` en ambas máquinas
-   - Verificar logs para mensajes "Received signal"
+Este es solo un ejemplo simple. Para producción, considera usar HTTP REST, WebSocket u otro mecanismo de señalización robusto.
 
 ## Comandos de Consola Útiles
 

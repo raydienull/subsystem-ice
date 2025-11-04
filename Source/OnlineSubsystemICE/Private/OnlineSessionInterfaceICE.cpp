@@ -1017,8 +1017,13 @@ void FOnlineSessionICE::AddRemoteICECandidate(const FString& CandidateString)
 			ICEAgent->AddRemoteCandidate(Candidate);
 			UE_LOG(LogOnlineICE, Log, TEXT("Remote candidate added successfully"));
 			
-			// Notify listeners
-			OnRemoteCandidateReceived.Broadcast(NAME_None, Candidate);
+			// Notify listeners - Use first session name if available, otherwise NAME_None
+			FName SessionName = NAME_None;
+			if (Sessions.Num() > 0)
+			{
+				SessionName = Sessions.CreateConstIterator().Key();
+			}
+			OnRemoteCandidateReceived.Broadcast(SessionName, Candidate);
 		}
 		else
 		{

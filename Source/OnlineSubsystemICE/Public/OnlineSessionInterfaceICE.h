@@ -18,6 +18,7 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(FOnLocalCandidatesReady, FName, const TArra
 /**
  * Delegate for remote ICE candidate received notification
  * This allows external systems to be notified when candidates are received
+ * Params: SessionName, Candidate
  */
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnRemoteCandidateReceived, FName, const struct FICECandidate&);
 
