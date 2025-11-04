@@ -21,7 +21,9 @@ enum class EICEConnectionState : uint8
 	ConnectingDirect,
 	/** Conectando usando TURN */
 	ConnectingRelay,
-	/** Conexión establecida */
+	/** Performing handshake to verify bidirectional connection */
+	PerformingHandshake,
+	/** Connection established */
 	Connected,
 	/** Error o desconexión */
 	Failed
@@ -180,6 +182,18 @@ private:
 	 */
 	void Close();
 
+	/**
+	 * Send handshake packet to verify bidirectional communication
+	 * @return True if handshake packet was sent successfully
+	 */
+	bool SendHandshake();
+
+	/**
+	 * Process received data and handle handshake packets
+	 * @return True if data was processed successfully
+	 */
+	bool ProcessReceivedData();
+
 private:
 	/** Agent configuration */
 	FICEAgentConfig Config;
@@ -218,6 +232,19 @@ private:
 	/** Thread-safe access to connection state */
 	mutable FCriticalSection ConnectionLock;
 
+	/** Handshake state tracking */
+	bool bHandshakeSent;
+	bool bHandshakeReceived;
+	float HandshakeTimeout;
+	float TimeSinceHandshakeStart;
+	float TimeSinceLastHandshakeSend;
+	
+	/** Maximum time to wait for handshake response (seconds) */
+	static constexpr float MAX_HANDSHAKE_TIMEOUT = 5.0f;
+	
+	/** Retry interval for handshake packets (seconds) */
+	static constexpr float HANDSHAKE_RETRY_INTERVAL = 1.0f;
+
 	/**
 	 * Update the current connection state and notify listeners
 	 * @param NewState - The new connection state to transition to
@@ -230,6 +257,18 @@ private:
 	 * @return String representation of the state
 	 */
 	FString GetConnectionStateName(EICEConnectionState State) const;
+
+	/**
+	 * Check if handshake should be retried based on current state and timing
+	 * @return True if handshake should be retried
+	 */
+	bool ShouldRetryHandshake() const;
+
+	/**
+	 * Complete the handshake process and establish connection
+	 * Called when both send and receive handshake have completed
+	 */
+	void CompleteHandshake();
 
 	/** Gather host candidates (local network interfaces) */
 	void GatherHostCandidates();

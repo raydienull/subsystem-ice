@@ -20,6 +20,16 @@ namespace STUNConstants
 	constexpr int32 SHA1_BLOCK_SIZE = 64;
 }
 
+// Handshake protocol constants
+namespace HandshakeConstants
+{
+	static const uint8 MAGIC_NUMBER[4] = {0x49, 0x43, 0x45, 0x48}; // "ICEH"
+	constexpr uint8 PACKET_TYPE_HELLO_REQUEST = 0x01;
+	constexpr uint8 PACKET_TYPE_HELLO_RESPONSE = 0x02;
+	constexpr int32 HANDSHAKE_PACKET_SIZE = 9;
+	constexpr int32 MAX_RECEIVE_BUFFER_SIZE = 1024;
+}
+
 FString FICECandidate::ToString() const
 {
 	return FString::Printf(TEXT("candidate:%s %d %s %d %s %d typ %s"),
@@ -78,6 +88,11 @@ FICEAgent::FICEAgent(const FICEAgentConfig& InConfig)
 	, DirectConnectionAttempts(0)
 	, RetryDelay(1.0f)
 	, TimeSinceLastAttempt(0.0f)
+	, bHandshakeSent(false)
+	, bHandshakeReceived(false)
+	, HandshakeTimeout(MAX_HANDSHAKE_TIMEOUT)
+	, TimeSinceHandshakeStart(0.0f)
+	, TimeSinceLastHandshakeSend(0.0f)
 {
 }
 
@@ -949,8 +964,15 @@ bool FICEAgent::StartConnectivityChecks()
 		return false;
 	}
 
-	bIsConnected = true;
-	UE_LOG(LogOnlineICE, Log, TEXT("ICE connection established"));
+	// Start handshake to verify bidirectional connection
+	UE_LOG(LogOnlineICE, Log, TEXT("Socket created, starting handshake to verify connection"));
+	UpdateConnectionState(EICEConnectionState::PerformingHandshake);
+	
+	// Send initial handshake packet
+	if (!SendHandshake())
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Failed to send initial handshake packet"));
+	}
 
 	return true;
 }
@@ -1029,14 +1051,203 @@ void FICEAgent::Tick(float DeltaTime)
 			}
 			break;
 		}
+		case EICEConnectionState::PerformingHandshake:
+		{
+			// Process received data for handshake
+			ProcessReceivedData();
+			
+			TimeSinceHandshakeStart += DeltaTime;
+			TimeSinceLastHandshakeSend += DeltaTime;
+			
+			// Check handshake timeout
+			if (TimeSinceHandshakeStart >= HandshakeTimeout)
+			{
+				// Use handshake flags instead of bIsConnected to avoid race conditions
+				// Fail if either part of handshake is incomplete: !sent OR !received == !(sent AND received)
+				if (!bHandshakeSent || !bHandshakeReceived)
+				{
+					UE_LOG(LogOnlineICE, Error, TEXT("Handshake timeout - no response from peer"));
+					UpdateConnectionState(EICEConnectionState::Failed);
+				}
+			}
+			// Retry handshake send every second if we haven't received a response
+			else if (ShouldRetryHandshake())
+			{
+				UE_LOG(LogOnlineICE, Log, TEXT("Retrying handshake (%.1f seconds elapsed)"), TimeSinceHandshakeStart);
+				SendHandshake();
+				TimeSinceLastHandshakeSend = 0.0f; // Reset retry timer
+			}
+			break;
+		}
 		case EICEConnectionState::Connected:
 		{
-			// Implementar keepalive si es necesario
+			// Process received data in connected state (for possible future keepalives)
+			ProcessReceivedData();
 			break;
 		}
 		default:
 			break;
 	}
+}
+
+bool FICEAgent::SendHandshake()
+{
+	if (!Socket)
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Cannot send handshake: socket is null"));
+		return false;
+	}
+
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	if (!SocketSubsystem)
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Cannot send handshake: socket subsystem unavailable"));
+		return false;
+	}
+
+	// Create simple handshake packet
+	// Format: [Magic Number (4 bytes)] [Type (1 byte)] [Timestamp (4 bytes)]
+	uint8 HandshakePacket[HandshakeConstants::HANDSHAKE_PACKET_SIZE];
+	
+	// Magic number "ICEH"
+	for (int32 i = 0; i < 4; i++)
+	{
+		HandshakePacket[i] = HandshakeConstants::MAGIC_NUMBER[i];
+	}
+	
+	// Type: HELLO request or HELLO response
+	HandshakePacket[4] = bHandshakeReceived ? 
+		HandshakeConstants::PACKET_TYPE_HELLO_RESPONSE : 
+		HandshakeConstants::PACKET_TYPE_HELLO_REQUEST;
+	
+	// Timestamp (simple counter for correlation)
+	uint32 Timestamp = FPlatformTime::Cycles();
+	HandshakePacket[5] = (Timestamp >> 24) & 0xFF;
+	HandshakePacket[6] = (Timestamp >> 16) & 0xFF;
+	HandshakePacket[7] = (Timestamp >> 8) & 0xFF;
+	HandshakePacket[8] = Timestamp & 0xFF;
+
+	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->GetAddressFromString(SelectedRemoteCandidate.Address);
+	if (!RemoteAddr.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Cannot send handshake: invalid remote address"));
+		return false;
+	}
+	RemoteAddr->SetPort(SelectedRemoteCandidate.Port);
+
+	int32 BytesSent = 0;
+	bool bSuccess = Socket->SendTo(HandshakePacket, sizeof(HandshakePacket), BytesSent, *RemoteAddr);
+	
+	if (bSuccess && BytesSent == sizeof(HandshakePacket))
+	{
+		if (!bHandshakeReceived)
+		{
+			// Only initialize timer on first send, not on retries
+			if (!bHandshakeSent)
+			{
+				bHandshakeSent = true;
+				TimeSinceHandshakeStart = 0.0f;
+				TimeSinceLastHandshakeSend = 0.0f;
+			}
+			UE_LOG(LogOnlineICE, Log, TEXT("Handshake HELLO request sent to %s:%d"), 
+				*SelectedRemoteCandidate.Address, SelectedRemoteCandidate.Port);
+		}
+		else
+		{
+			UE_LOG(LogOnlineICE, Log, TEXT("Handshake HELLO response sent to %s:%d"), 
+				*SelectedRemoteCandidate.Address, SelectedRemoteCandidate.Port);
+		}
+		return true;
+	}
+	else
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Failed to send handshake packet: sent %d of %d bytes"), 
+			BytesSent, (int32)sizeof(HandshakePacket));
+		return false;
+	}
+}
+
+bool FICEAgent::ProcessReceivedData()
+{
+	if (!Socket)
+	{
+		return false;
+	}
+
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	if (!SocketSubsystem)
+	{
+		return false;
+	}
+
+	// Check if data is available
+	uint32 PendingDataSize = 0;
+	if (!Socket->HasPendingData(PendingDataSize) || PendingDataSize == 0)
+	{
+		return false;
+	}
+
+	// Buffer to receive data
+	uint8 ReceiveBuffer[HandshakeConstants::MAX_RECEIVE_BUFFER_SIZE];
+	int32 BytesRead = 0;
+	TSharedRef<FInternetAddr> FromAddr = SocketSubsystem->CreateInternetAddr();
+
+	if (!Socket->RecvFrom(ReceiveBuffer, sizeof(ReceiveBuffer), BytesRead, *FromAddr))
+	{
+		return false;
+	}
+
+	if (BytesRead < HandshakeConstants::HANDSHAKE_PACKET_SIZE)
+	{
+		// Packet too small to be a valid handshake
+		return false;
+	}
+
+	// Verify magic number
+	bool bIsMagicNumberValid = true;
+	for (int32 i = 0; i < 4; i++)
+	{
+		if (ReceiveBuffer[i] != HandshakeConstants::MAGIC_NUMBER[i])
+		{
+			bIsMagicNumberValid = false;
+			break;
+		}
+	}
+
+	if (bIsMagicNumberValid)
+	{
+		uint8 PacketType = ReceiveBuffer[4];
+		
+		if (PacketType == HandshakeConstants::PACKET_TYPE_HELLO_REQUEST) // HELLO request
+		{
+			UE_LOG(LogOnlineICE, Log, TEXT("Received handshake HELLO request from %s"), 
+				*FromAddr->ToString(true));
+			
+			bHandshakeReceived = true;
+			
+			// Respond with HELLO response
+			SendHandshake();
+			
+			// Check if handshake is complete
+			CompleteHandshake();
+			
+			return true;
+		}
+		else if (PacketType == HandshakeConstants::PACKET_TYPE_HELLO_RESPONSE) // HELLO response
+		{
+			UE_LOG(LogOnlineICE, Log, TEXT("Received handshake HELLO response from %s"), 
+				*FromAddr->ToString(true));
+			
+			bHandshakeReceived = true;
+			
+			// Check if handshake is complete
+			CompleteHandshake();
+			
+			return true;
+		}
+	}
+
+	return false;
 }
 
 void FICEAgent::Close()
@@ -1057,8 +1268,12 @@ void FICEAgent::Close()
 	}
 
 	bIsConnected = false;
+	bHandshakeSent = false;
+	bHandshakeReceived = false;
 	DirectConnectionAttempts = 0;
 	TimeSinceLastAttempt = 0.0f;
+	TimeSinceHandshakeStart = 0.0f;
+	TimeSinceLastHandshakeSend = 0.0f;
 	LocalCandidates.Empty();
 	RemoteCandidates.Empty();
 }
@@ -1077,6 +1292,23 @@ void FICEAgent::CalculateMD5(const FString& Input, uint8* OutHash)
 	MD5Context.Final(OutHash);
 }
 
+bool FICEAgent::ShouldRetryHandshake() const
+{
+	return TimeSinceLastHandshakeSend >= HANDSHAKE_RETRY_INTERVAL && 
+	       bHandshakeSent && 
+	       !bHandshakeReceived;
+}
+
+void FICEAgent::CompleteHandshake()
+{
+	if (bHandshakeSent && bHandshakeReceived)
+	{
+		bIsConnected = true;
+		UpdateConnectionState(EICEConnectionState::Connected);
+		UE_LOG(LogOnlineICE, Log, TEXT("ICE connection fully established - handshake complete"));
+	}
+}
+
 FString FICEAgent::GetConnectionStateName(EICEConnectionState State) const
 {
 	switch (State)
@@ -1089,6 +1321,8 @@ FString FICEAgent::GetConnectionStateName(EICEConnectionState State) const
 			return TEXT("ConnectingDirect");
 		case EICEConnectionState::ConnectingRelay:
 			return TEXT("ConnectingRelay");
+		case EICEConnectionState::PerformingHandshake:
+			return TEXT("PerformingHandshake");
 		case EICEConnectionState::Connected:
 			return TEXT("Connected");
 		case EICEConnectionState::Failed:
