@@ -27,8 +27,6 @@ public class OnlineSubsystemICE : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"Json",
-				"JsonUtilities",
 				"HTTP"
 			}
 		);

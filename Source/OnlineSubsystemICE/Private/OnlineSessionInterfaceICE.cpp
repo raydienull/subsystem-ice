@@ -4,8 +4,6 @@
 #include "OnlineSubsystemICE.h"
 #include "OnlineSubsystemUtils.h"
 #include "ICEAgent.h"
-#include "ICESignalingInterface.h"
-#include "Misc/Paths.h"
 
 namespace
 {
@@ -59,30 +57,12 @@ FOnlineSessionICE::FOnlineSessionICE(FOnlineSubsystemICE* InSubsystem)
 	
 	ICEAgent = MakeShared<FICEAgent>(Config);
 	
-	// Initialize local file signaling for testing
-	// Use temp directory for signaling files
-	FString SignalingDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("ICESignaling"));
-	SignalingInterface = MakeShared<FLocalFileSignaling>(SignalingDir);
-	
-	if (SignalingInterface->Initialize())
-	{
-		// Bind to signaling messages
-		SignalingInterface->OnSignalReceived.AddRaw(this, &FOnlineSessionICE::OnSignalReceived);
-		UE_LOG(LogOnlineICE, Log, TEXT("Local signaling initialized: PeerId=%s"), *SignalingInterface->GetLocalPeerId());
-	}
-	else
-	{
-		UE_LOG(LogOnlineICE, Warning, TEXT("Failed to initialize local signaling"));
-	}
+	UE_LOG(LogOnlineICE, Log, TEXT("OnlineSessionICE initialized"));
 }
 
 FOnlineSessionICE::~FOnlineSessionICE()
 {
-	if (SignalingInterface.IsValid())
-	{
-		SignalingInterface->OnSignalReceived.RemoveAll(this);
-		SignalingInterface->Shutdown();
-	}
+	// Cleanup
 }
 
 bool FOnlineSessionICE::CreateSession(int32 HostingPlayerNum, FName SessionName, const FOnlineSessionSettings& NewSessionSettings)
@@ -113,17 +93,14 @@ bool FOnlineSessionICE::CreateSession(int32 HostingPlayerNum, FName SessionName,
 			TArray<FICECandidate> LocalCandidates = ICEAgent->GetLocalCandidates();
 			UE_LOG(LogOnlineICE, Log, TEXT("Gathered %d ICE candidates for session"), LocalCandidates.Num());
 			
-			// Log candidates for debugging/manual signaling
+			// Log candidates for debugging
 			for (const FICECandidate& Candidate : LocalCandidates)
 			{
 				UE_LOG(LogOnlineICE, Verbose, TEXT("  %s"), *Candidate.ToString());
 			}
 			
-			// Automatically send candidates via signaling (broadcast offer)
-			if (SignalingInterface.IsValid() && SignalingInterface->IsActive())
-			{
-				SendLocalCandidates(SessionName.ToString(), FString());
-			}
+			// Notify listeners that local candidates are ready
+			OnLocalCandidatesReady.Broadcast(SessionName, LocalCandidates);
 		}
 		else
 		{
@@ -516,24 +493,14 @@ bool FOnlineSessionICE::JoinSession(int32 PlayerNum, FName SessionName, const FO
 			TArray<FICECandidate> LocalCandidates = ICEAgent->GetLocalCandidates();
 			UE_LOG(LogOnlineICE, Log, TEXT("Gathered %d ICE candidates for joining"), LocalCandidates.Num());
 			
-			// Log candidates for debugging/manual signaling
+			// Log candidates for debugging
 			for (const FICECandidate& Candidate : LocalCandidates)
 			{
 				UE_LOG(LogOnlineICE, Verbose, TEXT("  %s"), *Candidate.ToString());
 			}
 			
-			// Automatically send answer candidates via signaling to host
-			if (SignalingInterface.IsValid() && SignalingInterface->IsActive())
-			{
-				// Get host peer ID from session info if available
-				FString HostPeerId;
-				if (DesiredSession.Session.OwningUserId.IsValid())
-				{
-					HostPeerId = DesiredSession.Session.OwningUserId->ToString();
-				}
-				
-				SendLocalCandidates(SessionName.ToString(), HostPeerId);
-			}
+			// Notify listeners that local candidates are ready
+			OnLocalCandidatesReady.Broadcast(SessionName, LocalCandidates);
 		}
 		else
 		{
@@ -1008,16 +975,10 @@ FUniqueNetIdPtr FOnlineSessionICE::CreateSessionIdFromString(const FString& Sess
 void FOnlineSessionICE::Tick(float DeltaTime)
 {
 	// Periodic processing for sessions
-	// In a real implementation, this would handle ICE keepalives, timeouts, etc.
+	// Handle ICE keepalives, timeouts, etc.
 	if (ICEAgent.IsValid())
 	{
 		ICEAgent->Tick(DeltaTime);
-	}
-	
-	// Process signaling messages
-	if (SignalingInterface.IsValid())
-	{
-		SignalingInterface->ProcessSignals();
 	}
 }
 
@@ -1055,6 +1016,9 @@ void FOnlineSessionICE::AddRemoteICECandidate(const FString& CandidateString)
 		{
 			ICEAgent->AddRemoteCandidate(Candidate);
 			UE_LOG(LogOnlineICE, Log, TEXT("Remote candidate added successfully"));
+			
+			// Notify listeners
+			OnRemoteCandidateReceived.Broadcast(NAME_None, Candidate);
 		}
 		else
 		{
@@ -1124,75 +1088,4 @@ void FOnlineSessionICE::DumpICEStatus(FOutputDevice& Ar)
 	}
 
 	Ar.Logf(TEXT("============================="));
-}
-
-void FOnlineSessionICE::OnSignalReceived(const FICESignalMessage& Message)
-{
-	UE_LOG(LogOnlineICE, Log, TEXT("Received signal from %s: Type=%d, Candidates=%d"), 
-		*Message.SenderId, (int32)Message.Type, Message.Candidates.Num());
-	
-	if (!ICEAgent.IsValid())
-	{
-		UE_LOG(LogOnlineICE, Warning, TEXT("Cannot process signal: ICE agent not initialized"));
-		return;
-	}
-	
-	// Add remote candidates to ICE agent
-	for (const FICECandidate& Candidate : Message.Candidates)
-	{
-		ICEAgent->AddRemoteCandidate(Candidate);
-		UE_LOG(LogOnlineICE, Verbose, TEXT("Added remote candidate: %s"), *Candidate.ToString());
-	}
-	
-	// If we have candidates and this is an offer/answer, start connectivity checks
-	if (Message.Type == EICESignalType::Offer || Message.Type == EICESignalType::Answer)
-	{
-		TArray<FICECandidate> LocalCandidates = ICEAgent->GetLocalCandidates();
-		if (LocalCandidates.Num() > 0 && Message.Candidates.Num() > 0)
-		{
-			UE_LOG(LogOnlineICE, Log, TEXT("Starting ICE connectivity checks"));
-			ICEAgent->StartConnectivityChecks();
-		}
-	}
-}
-
-void FOnlineSessionICE::SendLocalCandidates(const FString& SessionId, const FString& ReceiverId)
-{
-	if (!SignalingInterface.IsValid() || !SignalingInterface->IsActive())
-	{
-		UE_LOG(LogOnlineICE, Warning, TEXT("Cannot send candidates: signaling not active"));
-		return;
-	}
-	
-	if (!ICEAgent.IsValid())
-	{
-		UE_LOG(LogOnlineICE, Warning, TEXT("Cannot send candidates: ICE agent not initialized"));
-		return;
-	}
-	
-	// Get local candidates
-	TArray<FICECandidate> LocalCandidates = ICEAgent->GetLocalCandidates();
-	if (LocalCandidates.Num() == 0)
-	{
-		UE_LOG(LogOnlineICE, Warning, TEXT("No local candidates to send"));
-		return;
-	}
-	
-	// Create signaling message
-	FICESignalMessage Message;
-	Message.Type = ReceiverId.IsEmpty() ? EICESignalType::Offer : EICESignalType::Answer;
-	Message.SessionId = SessionId;
-	Message.SenderId = SignalingInterface->GetLocalPeerId();
-	Message.ReceiverId = ReceiverId;
-	Message.Candidates = LocalCandidates;
-	
-	// Send via signaling
-	if (SignalingInterface->SendSignal(Message))
-	{
-		UE_LOG(LogOnlineICE, Log, TEXT("Sent %d candidates for session %s"), LocalCandidates.Num(), *SessionId);
-	}
-	else
-	{
-		UE_LOG(LogOnlineICE, Error, TEXT("Failed to send candidates for session %s"), *SessionId);
-	}
 }
