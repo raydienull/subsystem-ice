@@ -21,9 +21,9 @@ enum class EICEConnectionState : uint8
 	ConnectingDirect,
 	/** Conectando usando TURN */
 	ConnectingRelay,
-	/** Realizando handshake para verificar conexión bidireccional */
+	/** Performing handshake to verify bidirectional connection */
 	PerformingHandshake,
-	/** Conexión establecida */
+	/** Connection established */
 	Connected,
 	/** Error o desconexión */
 	Failed

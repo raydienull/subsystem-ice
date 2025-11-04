@@ -964,11 +964,11 @@ bool FICEAgent::StartConnectivityChecks()
 		return false;
 	}
 
-	// Iniciar handshake para verificar conexión bidireccional
+	// Start handshake to verify bidirectional connection
 	UE_LOG(LogOnlineICE, Log, TEXT("Socket created, starting handshake to verify connection"));
 	UpdateConnectionState(EICEConnectionState::PerformingHandshake);
 	
-	// Enviar paquete de handshake inicial
+	// Send initial handshake packet
 	if (!SendHandshake())
 	{
 		UE_LOG(LogOnlineICE, Warning, TEXT("Failed to send initial handshake packet"));
@@ -1053,23 +1053,23 @@ void FICEAgent::Tick(float DeltaTime)
 		}
 		case EICEConnectionState::PerformingHandshake:
 		{
-			// Procesar datos recibidos para handshake
+			// Process received data for handshake
 			ProcessReceivedData();
 			
 			TimeSinceHandshakeStart += DeltaTime;
 			TimeSinceLastHandshakeSend += DeltaTime;
 			
-			// Verificar timeout del handshake
+			// Check handshake timeout
 			if (TimeSinceHandshakeStart >= HandshakeTimeout)
 			{
-				// Usar flags de handshake en lugar de bIsConnected para evitar race conditions
+				// Use handshake flags instead of bIsConnected to avoid race conditions
 				if (!bHandshakeSent || !bHandshakeReceived)
 				{
 					UE_LOG(LogOnlineICE, Error, TEXT("Handshake timeout - no response from peer"));
 					UpdateConnectionState(EICEConnectionState::Failed);
 				}
 			}
-			// Reintentar envío de handshake cada segundo si no hemos recibido respuesta
+			// Retry handshake send every second if we haven't received a response
 			else if (ShouldRetryHandshake())
 			{
 				UE_LOG(LogOnlineICE, Log, TEXT("Retrying handshake (%.1f seconds elapsed)"), TimeSinceHandshakeStart);
@@ -1080,7 +1080,7 @@ void FICEAgent::Tick(float DeltaTime)
 		}
 		case EICEConnectionState::Connected:
 		{
-			// Procesar datos recibidos en estado conectado (para posibles keepalives futuros)
+			// Process received data in connected state (for possible future keepalives)
 			ProcessReceivedData();
 			break;
 		}
@@ -1104,8 +1104,8 @@ bool FICEAgent::SendHandshake()
 		return false;
 	}
 
-	// Crear paquete de handshake simple
-	// Formato: [Magic Number (4 bytes)] [Type (1 byte)] [Timestamp (4 bytes)]
+	// Create simple handshake packet
+	// Format: [Magic Number (4 bytes)] [Type (1 byte)] [Timestamp (4 bytes)]
 	uint8 HandshakePacket[HandshakeConstants::HANDSHAKE_PACKET_SIZE];
 	
 	// Magic number "ICEH"
@@ -1141,7 +1141,7 @@ bool FICEAgent::SendHandshake()
 	{
 		if (!bHandshakeReceived)
 		{
-			// Solo inicializar el timer en el primer envío, no en reintentos
+			// Only initialize timer on first send, not on retries
 			if (!bHandshakeSent)
 			{
 				bHandshakeSent = true;
@@ -1179,14 +1179,14 @@ bool FICEAgent::ProcessReceivedData()
 		return false;
 	}
 
-	// Verificar si hay datos disponibles
+	// Check if data is available
 	uint32 PendingDataSize = 0;
 	if (!Socket->HasPendingData(PendingDataSize) || PendingDataSize == 0)
 	{
 		return false;
 	}
 
-	// Buffer para recibir datos
+	// Buffer to receive data
 	uint8 ReceiveBuffer[HandshakeConstants::MAX_RECEIVE_BUFFER_SIZE];
 	int32 BytesRead = 0;
 	TSharedRef<FInternetAddr> FromAddr = SocketSubsystem->CreateInternetAddr();
@@ -1198,11 +1198,11 @@ bool FICEAgent::ProcessReceivedData()
 
 	if (BytesRead < HandshakeConstants::HANDSHAKE_PACKET_SIZE)
 	{
-		// Paquete demasiado pequeño para ser un handshake válido
+		// Packet too small to be a valid handshake
 		return false;
 	}
 
-	// Verificar magic number
+	// Verify magic number
 	bool bIsMagicNumberValid = true;
 	for (int32 i = 0; i < 4; i++)
 	{
@@ -1224,10 +1224,10 @@ bool FICEAgent::ProcessReceivedData()
 			
 			bHandshakeReceived = true;
 			
-			// Responder con HELLO response
+			// Respond with HELLO response
 			SendHandshake();
 			
-			// Si ya enviamos nuestro request, la conexión está establecida
+			// If we already sent our request, connection is established
 			if (bHandshakeSent)
 			{
 				bIsConnected = true;
@@ -1244,7 +1244,7 @@ bool FICEAgent::ProcessReceivedData()
 			
 			bHandshakeReceived = true;
 			
-			// Conexión establecida
+			// Connection established
 			if (bHandshakeSent)
 			{
 				bIsConnected = true;
