@@ -93,8 +93,9 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 				SessionSettings.bUsesPresence = true;
 				SessionSettings.bAllowInvites = true;
 				
-				// Bind to completion delegate
-				SessionInterface->OnCreateSessionCompleteDelegates.AddLambda([SessionNameStr](FName InSessionName, bool bWasSuccessful)
+				// Bind to completion delegate with self-cleanup
+				FDelegateHandle* DelegateHandlePtr = new FDelegateHandle();
+				*DelegateHandlePtr = SessionInterface->OnCreateSessionCompleteDelegates.AddLambda([SessionNameStr, DelegateHandlePtr](FName InSessionName, bool bWasSuccessful)
 				{
 					if (bWasSuccessful)
 					{
@@ -110,13 +111,28 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 							if (Sessions.IsValid())
 							{
 								Sessions->StartSession(InSessionName);
+								
+								// Clean up delegate after use
+								Sessions->ClearOnCreateSessionCompleteDelegate_Handle(*DelegateHandlePtr);
 							}
 						}
 					}
 					else
 					{
 						UE_LOG(LogOnlineICE, Warning, TEXT("ICE.HOST: Failed to create session '%s'"), *SessionNameStr);
+						
+						// Clean up delegate even on failure
+						IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+						if (OnlineSub)
+						{
+							IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+							if (Sessions.IsValid())
+							{
+								Sessions->ClearOnCreateSessionCompleteDelegate_Handle(*DelegateHandlePtr);
+							}
+						}
 					}
+					delete DelegateHandlePtr;
 				});
 				
 				// Create the session
@@ -166,8 +182,9 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 				SearchResult.Session.SessionSettings.bUsesPresence = true;
 				SearchResult.Session.SessionSettings.bAllowInvites = true;
 				
-				// Bind to completion delegate
-				SessionInterface->OnJoinSessionCompleteDelegates.AddLambda([SessionNameStr](FName InSessionName, EOnJoinSessionCompleteResult::Type Result)
+				// Bind to completion delegate with self-cleanup
+				FDelegateHandle* DelegateHandlePtr = new FDelegateHandle();
+				*DelegateHandlePtr = SessionInterface->OnJoinSessionCompleteDelegates.AddLambda([SessionNameStr, DelegateHandlePtr](FName InSessionName, EOnJoinSessionCompleteResult::Type Result)
 				{
 					if (Result == EOnJoinSessionCompleteResult::Success)
 					{
@@ -175,11 +192,34 @@ bool FOnlineSubsystemICE::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice&
 						UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Use ICE.LISTCANDIDATES to see your ICE candidates"));
 						UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Share candidates with remote peer using your signaling method"));
 						UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: After exchanging candidates, use ICE.STARTCHECKS to establish P2P connection"));
+						
+						// Clean up delegate after use
+						IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+						if (OnlineSub)
+						{
+							IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+							if (Sessions.IsValid())
+							{
+								Sessions->ClearOnJoinSessionCompleteDelegate_Handle(*DelegateHandlePtr);
+							}
+						}
 					}
 					else
 					{
 						UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: Failed to join session '%s'"), *SessionNameStr);
+						
+						// Clean up delegate even on failure
+						IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+						if (OnlineSub)
+						{
+							IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+							if (Sessions.IsValid())
+							{
+								Sessions->ClearOnJoinSessionCompleteDelegate_Handle(*DelegateHandlePtr);
+							}
+						}
 					}
+					delete DelegateHandlePtr;
 				});
 				
 				// Join the session
