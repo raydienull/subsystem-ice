@@ -12,12 +12,92 @@ For local testing without a signaling server, OnlineSubsystemICE provides consol
 
 ```
 ICE.HELP                          - Show available commands
+ICE.HOST [sessionName]            - Host a new game session (simplified)
+ICE.JOIN <sessionName>            - Join an existing game session (simplified)
 ICE.SETREMOTEPEER <ip> <port>     - Set remote peer address
 ICE.ADDCANDIDATE <candidate>      - Add remote ICE candidate
 ICE.LISTCANDIDATES                - List local ICE candidates
 ICE.STARTCHECKS                   - Start connectivity checks
 ICE.STATUS                        - Show connection status
 ```
+
+## Quick Start: Simplified P2P Testing
+
+**NEW**: Use the simplified `ICE.HOST` and `ICE.JOIN` commands for easier P2P testing!
+
+### Simplified Workflow (Recommended for Beginners)
+
+This workflow is perfect for quickly testing P2P connectivity between two game instances.
+
+**Prerequisites:**
+- Two game instances running (same computer or different computers on the same network)
+- Both instances have OnlineSubsystemICE enabled in DefaultEngine.ini
+
+**Steps:**
+
+1. **Instance A (Host) - Create Session:**
+   ```
+   ICE.HOST MyGameSession
+   ```
+   Expected output:
+   ```
+   ICE.HOST: Creating session 'MyGameSession'...
+   ICE.HOST: Session 'MyGameSession' created successfully!
+   ICE.HOST: Use ICE.LISTCANDIDATES to see your ICE candidates
+   ```
+
+2. **Instance A - List Candidates:**
+   ```
+   ICE.LISTCANDIDATES
+   ```
+   Copy the displayed candidates (you'll need to share them with Instance B)
+
+3. **Instance B (Client) - Join Session:**
+   ```
+   ICE.JOIN MyGameSession
+   ```
+   Expected output:
+   ```
+   ICE.JOIN: Joining session 'MyGameSession'...
+   ICE.JOIN: Joined session 'MyGameSession' successfully!
+   ICE.JOIN: Use ICE.LISTCANDIDATES to see your ICE candidates
+   ```
+
+4. **Instance B - List Candidates:**
+   ```
+   ICE.LISTCANDIDATES
+   ```
+   Copy the displayed candidates (you'll need to share them with Instance A)
+
+5. **Both Instances - Exchange Candidates:**
+   
+   On Instance A, add each of Instance B's candidates:
+   ```
+   ICE.ADDCANDIDATE candidate:1 1 UDP 2130706431 192.168.1.101 5000 typ host
+   ```
+   
+   On Instance B, add each of Instance A's candidates:
+   ```
+   ICE.ADDCANDIDATE candidate:1 1 UDP 2130706431 192.168.1.100 5000 typ host
+   ```
+
+6. **Both Instances - Start Connectivity Checks:**
+   ```
+   ICE.STARTCHECKS
+   ```
+
+7. **Both Instances - Verify Connection:**
+   ```
+   ICE.STATUS
+   ```
+   You should see "Connected: Yes" if successful!
+
+### Notes
+
+- Session names must match between `ICE.HOST` and `ICE.JOIN`
+- If you don't specify a session name with `ICE.HOST`, it defaults to "GameSession"
+- You still need to manually exchange ICE candidates (steps 5-6) for now
+- The simplified commands automatically handle session creation/joining with sensible defaults
 
 ## Testing Workflow
 

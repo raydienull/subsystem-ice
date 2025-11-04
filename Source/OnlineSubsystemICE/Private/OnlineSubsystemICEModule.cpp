@@ -7,6 +7,8 @@
 #include "OnlineSubsystemNames.h"
 #include "Modules/ModuleManager.h"
 #include "HAL/IConsoleManager.h"
+#include "OnlineSubsystem.h"
+#include "Interfaces/OnlineSessionInterface.h"
 
 IMPLEMENT_MODULE(FOnlineSubsystemICEModule, OnlineSubsystemICE);
 
@@ -68,12 +70,215 @@ void FOnlineSubsystemICEModule::StartupModule()
 		FConsoleCommandDelegate::CreateLambda([]()
 		{
 			UE_LOG(LogOnlineICE, Display, TEXT("Available ICE commands:"));
+			UE_LOG(LogOnlineICE, Display, TEXT("  ICE.HOST [sessionName] - Host a new game session (simplified)"));
+			UE_LOG(LogOnlineICE, Display, TEXT("  ICE.JOIN <sessionName> - Join an existing game session (simplified)"));
 			UE_LOG(LogOnlineICE, Display, TEXT("  ICE.SETREMOTEPEER <ip> <port> - Set remote peer address"));
 			UE_LOG(LogOnlineICE, Display, TEXT("  ICE.ADDCANDIDATE <candidate> - Add remote ICE candidate"));
 			UE_LOG(LogOnlineICE, Display, TEXT("  ICE.LISTCANDIDATES - List local ICE candidates"));
 			UE_LOG(LogOnlineICE, Display, TEXT("  ICE.STARTCHECKS - Start connectivity checks"));
 			UE_LOG(LogOnlineICE, Display, TEXT("  ICE.STATUS - Show connection status"));
 			UE_LOG(LogOnlineICE, Display, TEXT("  ICE.HELP - Show this help"));
+		}),
+		ECVF_Default
+	));
+
+	// ICE HOST
+	ConsoleCommands.Add(ConsoleManager.RegisterConsoleCommand(
+		TEXT("ICE.HOST"),
+		TEXT("Host a new game session. Usage: ICE.HOST [sessionName]"),
+		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+		{
+			FString SessionName = Args.Num() > 0 ? Args[0] : TEXT("GameSession");
+			
+			IOnlineSubsystem* OnlineSubsystem = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+			if (OnlineSubsystem)
+			{
+				IOnlineSessionPtr SessionInterface = OnlineSubsystem->GetSessionInterface();
+				if (SessionInterface.IsValid())
+				{
+					// Check if session already exists
+					FNamedOnlineSession* ExistingSession = SessionInterface->GetNamedSession(FName(*SessionName));
+					if (ExistingSession)
+					{
+						UE_LOG(LogOnlineICE, Warning, TEXT("ICE.HOST: Session '%s' already exists. Destroy it first."), *SessionName);
+						return;
+					}
+					
+					// Create session settings
+					FOnlineSessionSettings SessionSettings;
+					SessionSettings.NumPublicConnections = ICE_DEFAULT_MAX_PLAYERS;
+					SessionSettings.bShouldAdvertise = true;
+					SessionSettings.bAllowJoinInProgress = true;
+					SessionSettings.bIsLANMatch = false;
+					SessionSettings.bUsesPresence = true;
+					SessionSettings.bAllowInvites = true;
+					
+					// Bind to completion delegate with self-cleanup
+					// Note: Capturing SessionName by value to ensure it outlives the async callback
+					TSharedPtr<FDelegateHandle> DelegateHandlePtr = MakeShared<FDelegateHandle>();
+					*DelegateHandlePtr = SessionInterface->OnCreateSessionCompleteDelegates.AddLambda([SessionName, DelegateHandlePtr](FName InSessionName, bool bWasSuccessful)
+					{
+						if (bWasSuccessful)
+						{
+							UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Session '%s' created successfully!"), *SessionName);
+							UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Use ICE.LISTCANDIDATES to see your ICE candidates"));
+							UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Share candidates with remote peer using your signaling method"));
+							
+							// Start the session
+							IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+							if (OnlineSub)
+							{
+								IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+								if (Sessions.IsValid())
+								{
+									Sessions->StartSession(InSessionName);
+									
+									// Clean up delegate after use
+									Sessions->ClearOnCreateSessionCompleteDelegate_Handle(*DelegateHandlePtr);
+								}
+							}
+						}
+						else
+						{
+							UE_LOG(LogOnlineICE, Warning, TEXT("ICE.HOST: Failed to create session '%s'"), *SessionName);
+							
+							// Clean up delegate even on failure
+							IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+							if (OnlineSub)
+							{
+								IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+								if (Sessions.IsValid())
+								{
+									Sessions->ClearOnCreateSessionCompleteDelegate_Handle(*DelegateHandlePtr);
+								}
+							}
+						}
+						// DelegateHandlePtr will be automatically cleaned up by TSharedPtr
+					});
+					
+					// Create the session
+					bool bStarted = SessionInterface->CreateSession(0, FName(*SessionName), SessionSettings);
+					if (bStarted)
+					{
+						UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Creating session '%s'..."), *SessionName);
+					}
+					else
+					{
+						UE_LOG(LogOnlineICE, Warning, TEXT("ICE.HOST: Failed to start session creation"));
+					}
+				}
+				else
+				{
+					UE_LOG(LogOnlineICE, Warning, TEXT("ICE.HOST: Session interface not available"));
+				}
+			}
+			else
+			{
+				UE_LOG(LogOnlineICE, Warning, TEXT("ICE.HOST: OnlineSubsystemICE not initialized"));
+			}
+		}),
+		ECVF_Default
+	));
+
+	// ICE JOIN
+	ConsoleCommands.Add(ConsoleManager.RegisterConsoleCommand(
+		TEXT("ICE.JOIN"),
+		TEXT("Join an existing game session. Usage: ICE.JOIN <sessionName>"),
+		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+		{
+			if (Args.Num() < 1)
+			{
+				UE_LOG(LogOnlineICE, Warning, TEXT("Usage: ICE.JOIN <sessionName>"));
+				return;
+			}
+			
+			FString SessionName = Args[0];
+			
+			IOnlineSubsystem* OnlineSubsystem = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+			if (OnlineSubsystem)
+			{
+				IOnlineSessionPtr SessionInterface = OnlineSubsystem->GetSessionInterface();
+				if (SessionInterface.IsValid())
+				{
+					// Check if session already exists
+					FNamedOnlineSession* ExistingSession = SessionInterface->GetNamedSession(FName(*SessionName));
+					if (ExistingSession)
+					{
+						UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: Session '%s' already exists. Destroy it first."), *SessionName);
+						return;
+					}
+					
+					// Create a mock search result for joining
+					// In a real scenario, this would come from FindSessions
+					FOnlineSessionSearchResult SearchResult;
+					SearchResult.Session.SessionSettings.NumPublicConnections = ICE_DEFAULT_MAX_PLAYERS;
+					SearchResult.Session.SessionSettings.bShouldAdvertise = true;
+					SearchResult.Session.SessionSettings.bAllowJoinInProgress = true;
+					SearchResult.Session.SessionSettings.bIsLANMatch = false;
+					SearchResult.Session.SessionSettings.bUsesPresence = true;
+					SearchResult.Session.SessionSettings.bAllowInvites = true;
+					
+					// Bind to completion delegate with self-cleanup
+					// Note: Capturing SessionName by value to ensure it outlives the async callback
+					TSharedPtr<FDelegateHandle> DelegateHandlePtr = MakeShared<FDelegateHandle>();
+					*DelegateHandlePtr = SessionInterface->OnJoinSessionCompleteDelegates.AddLambda([SessionName, DelegateHandlePtr](FName InSessionName, EOnJoinSessionCompleteResult::Type Result)
+					{
+						if (Result == EOnJoinSessionCompleteResult::Success)
+						{
+							UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Joined session '%s' successfully!"), *SessionName);
+							UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Use ICE.LISTCANDIDATES to see your ICE candidates"));
+							UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Share candidates with remote peer using your signaling method"));
+							UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: After exchanging candidates, use ICE.STARTCHECKS to establish P2P connection"));
+							
+							// Clean up delegate after use
+							IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+							if (OnlineSub)
+							{
+								IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+								if (Sessions.IsValid())
+								{
+									Sessions->ClearOnJoinSessionCompleteDelegate_Handle(*DelegateHandlePtr);
+								}
+							}
+						}
+						else
+						{
+							UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: Failed to join session '%s'"), *SessionName);
+							
+							// Clean up delegate even on failure
+							IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+							if (OnlineSub)
+							{
+								IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+								if (Sessions.IsValid())
+								{
+									Sessions->ClearOnJoinSessionCompleteDelegate_Handle(*DelegateHandlePtr);
+								}
+							}
+						}
+						// DelegateHandlePtr will be automatically cleaned up by TSharedPtr
+					});
+					
+					// Join the session
+					bool bStarted = SessionInterface->JoinSession(0, FName(*SessionName), SearchResult);
+					if (bStarted)
+					{
+						UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Joining session '%s'..."), *SessionName);
+					}
+					else
+					{
+						UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: Failed to start join session"));
+					}
+				}
+				else
+				{
+					UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: Session interface not available"));
+				}
+			}
+			else
+			{
+				UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: OnlineSubsystemICE not initialized"));
+			}
 		}),
 		ECVF_Default
 	));
