@@ -306,6 +306,13 @@ private:
 	 */
 	void CleanupSocketOnError();
 
+	/**
+	 * Select the candidate with the highest priority from an array
+	 * @param Candidates - Array of candidates to search
+	 * @return The candidate with the highest priority, or default if array is empty
+	 */
+	FICECandidate SelectHighestPriorityCandidate(const TArray<FICECandidate>& Candidates) const;
+
 	/** Gather host candidates (local network interfaces) */
 	void GatherHostCandidates();
 

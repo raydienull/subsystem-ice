@@ -982,25 +982,9 @@ bool FICEAgent::StartConnectivityChecks()
 
 		if (DirectLocalCandidates.Num() > 0 && DirectRemoteCandidates.Num() > 0)
 		{
-			// Seleccionar el candidato local de mayor prioridad
-			SelectedLocalCandidate = DirectLocalCandidates[0];
-			for (int32 i = 1; i < DirectLocalCandidates.Num(); ++i)
-			{
-				if (DirectLocalCandidates[i].Priority > SelectedLocalCandidate.Priority)
-				{
-					SelectedLocalCandidate = DirectLocalCandidates[i];
-				}
-			}
-
-			// Seleccionar el candidato remoto de mayor prioridad
-			SelectedRemoteCandidate = DirectRemoteCandidates[0];
-			for (int32 i = 1; i < DirectRemoteCandidates.Num(); ++i)
-			{
-				if (DirectRemoteCandidates[i].Priority > SelectedRemoteCandidate.Priority)
-				{
-					SelectedRemoteCandidate = DirectRemoteCandidates[i];
-				}
-			}
+			// Seleccionar candidatos de mayor prioridad
+			SelectedLocalCandidate = SelectHighestPriorityCandidate(DirectLocalCandidates);
+			SelectedRemoteCandidate = SelectHighestPriorityCandidate(DirectRemoteCandidates);
 
 			UE_LOG(LogOnlineICE, Log, TEXT("Attempting direct connection (try %d/%d) - Local: %s (priority: %d), Remote: %s (priority: %d)"),
 				DirectConnectionAttempts, MAX_DIRECT_ATTEMPTS,
@@ -1042,25 +1026,9 @@ bool FICEAgent::StartConnectivityChecks()
 
 		if (RelayLocalCandidates.Num() > 0 && RelayRemoteCandidates.Num() > 0)
 		{
-			// Seleccionar el candidato relay local de mayor prioridad
-			SelectedLocalCandidate = RelayLocalCandidates[0];
-			for (int32 i = 1; i < RelayLocalCandidates.Num(); ++i)
-			{
-				if (RelayLocalCandidates[i].Priority > SelectedLocalCandidate.Priority)
-				{
-					SelectedLocalCandidate = RelayLocalCandidates[i];
-				}
-			}
-
-			// Seleccionar el candidato relay remoto de mayor prioridad
-			SelectedRemoteCandidate = RelayRemoteCandidates[0];
-			for (int32 i = 1; i < RelayRemoteCandidates.Num(); ++i)
-			{
-				if (RelayRemoteCandidates[i].Priority > SelectedRemoteCandidate.Priority)
-				{
-					SelectedRemoteCandidate = RelayRemoteCandidates[i];
-				}
-			}
+			// Seleccionar candidatos relay de mayor prioridad
+			SelectedLocalCandidate = SelectHighestPriorityCandidate(RelayLocalCandidates);
+			SelectedRemoteCandidate = SelectHighestPriorityCandidate(RelayRemoteCandidates);
 
 			UE_LOG(LogOnlineICE, Log, TEXT("Selected relay candidates - Local: %s (priority: %d), Remote: %s (priority: %d)"),
 				*SelectedLocalCandidate.ToString(), SelectedLocalCandidate.Priority,
@@ -1635,6 +1603,25 @@ void FICEAgent::CleanupSocketOnError()
 		Socket = nullptr;
 	}
 	UpdateConnectionState(EICEConnectionState::Failed);
+}
+
+FICECandidate FICEAgent::SelectHighestPriorityCandidate(const TArray<FICECandidate>& Candidates) const
+{
+	if (Candidates.Num() == 0)
+	{
+		return FICECandidate();
+	}
+
+	const FICECandidate* BestCandidate = &Candidates[0];
+	for (int32 i = 1; i < Candidates.Num(); ++i)
+	{
+		if (Candidates[i].Priority > BestCandidate->Priority)
+		{
+			BestCandidate = &Candidates[i];
+		}
+	}
+	
+	return *BestCandidate;
 }
 
 FString FICEAgent::GetConnectionStateName(EICEConnectionState State) const
