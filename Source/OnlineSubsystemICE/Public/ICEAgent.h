@@ -207,6 +207,30 @@ private:
 	/** Socket for communication */
 	FSocket* Socket;
 
+	/** TURN relay socket (persistent for TURN connections) */
+	FSocket* TURNSocket;
+
+	/** TURN server address (cached for refresh) */
+	TSharedPtr<FInternetAddr> TURNServerAddr;
+
+	/** TURN relay address allocated by server */
+	TSharedPtr<FInternetAddr> TURNRelayAddr;
+
+	/** TURN allocation lifetime (seconds) */
+	int32 TURNAllocationLifetime;
+
+	/** Time since last TURN refresh (seconds) */
+	float TimeSinceTURNRefresh;
+
+	/** TURN channel number for ChannelBind */
+	uint16 TURNChannelNumber;
+
+	/** Whether TURN allocation is active */
+	bool bTURNAllocationActive;
+
+	/** Transaction ID for current TURN request */
+	uint8 TURNTransactionID[12];
+
 	/** Connection state */
 	bool bIsConnected;
 
@@ -289,6 +313,21 @@ private:
 	bool PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedPtr<FInternetAddr>& TURNAddr, 
 		const FString& Username, const FString& Credential, const FString& Realm, const FString& Nonce,
 		FString& OutRelayIP, int32& OutRelayPort, bool bIsRetry = false);
+
+	/** Perform TURN CreatePermission request */
+	bool PerformTURNCreatePermission(const FString& PeerAddress, int32 PeerPort);
+
+	/** Perform TURN ChannelBind request */
+	bool PerformTURNChannelBind(const FString& PeerAddress, int32 PeerPort, uint16 ChannelNumber);
+
+	/** Perform TURN Refresh request to keep allocation alive */
+	bool PerformTURNRefresh();
+
+	/** Send data through TURN relay using Send indication or ChannelData */
+	bool SendDataThroughTURN(const uint8* Data, int32 Size, const FString& PeerAddress, int32 PeerPort);
+
+	/** Receive data from TURN relay (unwrap ChannelData or Data indication) */
+	bool ReceiveDataFromTURN(uint8* Data, int32 MaxSize, int32& OutSize);
 
 	/** Calculate candidate priority */
 	int32 CalculatePriority(EICECandidateType Type, int32 LocalPreference, int32 ComponentId);

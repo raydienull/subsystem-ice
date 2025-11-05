@@ -18,6 +18,19 @@ namespace STUNConstants
 	constexpr uint8 ERROR_CLASS_MASK = 0x07;
 	constexpr int32 ERROR_CLASS_MULTIPLIER = 100;
 	constexpr int32 SHA1_BLOCK_SIZE = 64;
+	
+	// STUN Magic Cookie (RFC 5389)
+	constexpr uint32 MAGIC_COOKIE = 0x2112A442;
+	constexpr uint16 MAGIC_COOKIE_HIGH = 0x2112; // First 16 bits of magic cookie
+	
+	// TURN Channel number range (RFC 5766)
+	constexpr uint16 CHANNEL_NUMBER_MIN = 0x4000;
+	constexpr uint16 CHANNEL_NUMBER_MAX = 0x7FFF;
+	
+	// Packet format detection bits
+	constexpr uint8 PACKET_TYPE_MASK = 0xC0;
+	constexpr uint8 PACKET_TYPE_STUN = 0x00;      // STUN message: bits 00
+	constexpr uint8 PACKET_TYPE_CHANNEL_DATA = 0x40; // ChannelData: bits 01
 }
 
 // Handshake protocol constants
@@ -90,6 +103,11 @@ FICECandidate FICECandidate::FromString(const FString& CandidateString)
 FICEAgent::FICEAgent(const FICEAgentConfig& InConfig)
 	: Config(InConfig)
 	, Socket(nullptr)
+	, TURNSocket(nullptr)
+	, TURNAllocationLifetime(600)
+	, TimeSinceTURNRefresh(0.0f)
+	, TURNChannelNumber(STUNConstants::CHANNEL_NUMBER_MIN)
+	, bTURNAllocationActive(false)
 	, bIsConnected(false)
 	, ConnectionState(EICEConnectionState::New)
 	, DirectConnectionAttempts(0)
@@ -101,6 +119,7 @@ FICEAgent::FICEAgent(const FICEAgentConfig& InConfig)
 	, TimeSinceHandshakeStart(0.0f)
 	, TimeSinceLastHandshakeSend(0.0f)
 {
+	FMemory::Memzero(TURNTransactionID, sizeof(TURNTransactionID));
 }
 
 FICEAgent::~FICEAgent()
@@ -363,12 +382,12 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 					{
 						// XOR-ed Port (2 bytes at offset 6-7)
 						uint16 XorPort = (STUNResponse[Offset + 6] << 8) | STUNResponse[Offset + 7];
-						OutPublicPort = XorPort ^ 0x2112;
+						OutPublicPort = XorPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
 
 						// XOR-ed IP (4 bytes at offset 8-11)
 						uint32 XorIP = (STUNResponse[Offset + 8] << 24) | (STUNResponse[Offset + 9] << 16) |
 						              (STUNResponse[Offset + 10] << 8) | STUNResponse[Offset + 11];
-						uint32 PublicIPValue = XorIP ^ 0x2112A442;
+						uint32 PublicIPValue = XorIP ^ STUNConstants::MAGIC_COOKIE;
 
 						// Convert to string
 						OutPublicIP = FString::Printf(TEXT("%d.%d.%d.%d"),
@@ -437,19 +456,49 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 
 	TURNAddr->SetPort(Port);
 
-	// Create socket for TURN
-	FSocket* TURNSocket = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("TURN"), TURNAddr->GetProtocolType());
+	// Clean up existing TURN socket if any
+	if (TURNSocket)
+	{
+		SocketSubsystem->DestroySocket(TURNSocket);
+		TURNSocket = nullptr;
+	}
+
+	// Create socket for TURN (keep it persistent for refresh and data relay)
+	TURNSocket = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("TURN"), TURNAddr->GetProtocolType());
 	if (!TURNSocket)
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to create TURN socket"));
 		return false;
 	}
 
+	// Store TURN server address for later use (refresh, permissions, etc.)
+	TURNServerAddr = TURNAddr;
+
 	// First attempt: Send request without authentication to get realm and nonce
 	// The server will respond with 401 Unauthorized if authentication is required
 	bool bSuccess = PerformTURNAllocationRequest(TURNSocket, TURNAddr, Username, Credential, FString(), FString(), OutRelayIP, OutRelayPort, false);
 	
-	SocketSubsystem->DestroySocket(TURNSocket);
+	if (bSuccess)
+	{
+		// Store relay address for data transmission
+		TURNRelayAddr = SocketSubsystem->GetAddressFromString(OutRelayIP);
+		if (TURNRelayAddr.IsValid())
+		{
+			TURNRelayAddr->SetPort(OutRelayPort);
+		}
+		
+		bTURNAllocationActive = true;
+		TimeSinceTURNRefresh = 0.0f;
+		
+		UE_LOG(LogOnlineICE, Log, TEXT("TURN allocation successful, keeping socket open for data relay"));
+	}
+	else
+	{
+		// Clean up on failure
+		SocketSubsystem->DestroySocket(TURNSocket);
+		TURNSocket = nullptr;
+	}
+	
 	return bSuccess;
 }
 
@@ -649,7 +698,9 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 		{
 			UE_LOG(LogOnlineICE, Log, TEXT("TURN Allocate successful"));
 
-			// Parse attributes to find XOR-RELAYED-ADDRESS (0x0016)
+			bool bFoundRelayAddress = false;
+
+			// Parse attributes to find XOR-RELAYED-ADDRESS (0x0016) and LIFETIME (0x000D)
 			int32 AttrOffset = 20;
 			while (AttrOffset < BytesRead)
 			{
@@ -674,12 +725,12 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 					{
 						// XOR-ed Port (2 bytes at offset 6-7)
 						uint16 XorPort = (TURNResponse[AttrOffset + 6] << 8) | TURNResponse[AttrOffset + 7];
-						OutRelayPort = XorPort ^ 0x2112;
+						OutRelayPort = XorPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
 
 						// XOR-ed IP (4 bytes at offset 8-11)
 						uint32 XorIP = (TURNResponse[AttrOffset + 8] << 24) | (TURNResponse[AttrOffset + 9] << 16) |
 						              (TURNResponse[AttrOffset + 10] << 8) | TURNResponse[AttrOffset + 11];
-						uint32 RelayIPValue = XorIP ^ 0x2112A442;
+						uint32 RelayIPValue = XorIP ^ STUNConstants::MAGIC_COOKIE;
 
 						// Convert to string
 						OutRelayIP = FString::Printf(TEXT("%d.%d.%d.%d"),
@@ -689,13 +740,27 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 							RelayIPValue & 0xFF);
 
 						UE_LOG(LogOnlineICE, Log, TEXT("TURN allocated relay address: %s:%d"), *OutRelayIP, OutRelayPort);
-						return true;
+						bFoundRelayAddress = true;
+					}
+				}
+				else if (AttrType == 0x000D && AttrLength == 4) // LIFETIME
+				{
+					// Parse lifetime value (4 bytes, big-endian)
+					if (AttrOffset + 8 <= BytesRead)
+					{
+						TURNAllocationLifetime = (TURNResponse[AttrOffset + 4] << 24) | 
+						                         (TURNResponse[AttrOffset + 5] << 16) |
+						                         (TURNResponse[AttrOffset + 6] << 8) | 
+						                         TURNResponse[AttrOffset + 7];
+						UE_LOG(LogOnlineICE, Log, TEXT("TURN allocation lifetime: %d seconds"), TURNAllocationLifetime);
 					}
 				}
 
 				// Move to next attribute (pad to 4-byte boundary)
 				AttrOffset += 4 + ((AttrLength + 3) & ~3);
 			}
+
+			return bFoundRelayAddress;
 		}
 		else if (MessageType == 0x0113) // Allocate Error Response
 		{
@@ -1048,6 +1113,32 @@ bool FICEAgent::StartConnectivityChecks()
 		}
 	}
 
+	// If using TURN relay, create permission and bind channel
+	if (SelectedLocalCandidate.Type == EICECandidateType::Relayed && bTURNAllocationActive)
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Setting up TURN relay for communication"));
+		
+		// Create permission for remote peer
+		if (PerformTURNCreatePermission(SelectedRemoteCandidate.Address, SelectedRemoteCandidate.Port))
+		{
+			UE_LOG(LogOnlineICE, Log, TEXT("TURN permission created for peer"));
+			
+			// Bind channel for efficient data transfer
+			if (PerformTURNChannelBind(SelectedRemoteCandidate.Address, SelectedRemoteCandidate.Port, TURNChannelNumber))
+			{
+				UE_LOG(LogOnlineICE, Log, TEXT("TURN channel bound successfully"));
+			}
+			else
+			{
+				UE_LOG(LogOnlineICE, Warning, TEXT("TURN channel binding failed, will use Send indication"));
+			}
+		}
+		else
+		{
+			UE_LOG(LogOnlineICE, Warning, TEXT("TURN permission creation failed"));
+		}
+	}
+
 	// Start handshake to verify bidirectional connection
 	UE_LOG(LogOnlineICE, Log, TEXT("Socket created, starting handshake to verify connection"));
 	UpdateConnectionState(EICEConnectionState::PerformingHandshake);
@@ -1068,7 +1159,19 @@ bool FICEAgent::IsConnected() const
 
 bool FICEAgent::SendData(const uint8* Data, int32 Size)
 {
-	if (!bIsConnected || !Socket)
+	if (!bIsConnected)
+	{
+		return false;
+	}
+
+	// Use TURN relay if the local candidate is relayed
+	if (SelectedLocalCandidate.Type == EICECandidateType::Relayed && bTURNAllocationActive)
+	{
+		return SendDataThroughTURN(Data, Size, SelectedRemoteCandidate.Address, SelectedRemoteCandidate.Port);
+	}
+
+	// Otherwise use direct connection
+	if (!Socket)
 	{
 		return false;
 	}
@@ -1092,7 +1195,20 @@ bool FICEAgent::SendData(const uint8* Data, int32 Size)
 
 bool FICEAgent::ReceiveData(uint8* Data, int32 MaxSize, int32& OutSize)
 {
-	if (!bIsConnected || !Socket)
+	if (!bIsConnected)
+	{
+		OutSize = 0;
+		return false;
+	}
+
+	// Use TURN relay if the local candidate is relayed
+	if (SelectedLocalCandidate.Type == EICECandidateType::Relayed && bTURNAllocationActive)
+	{
+		return ReceiveDataFromTURN(Data, MaxSize, OutSize);
+	}
+
+	// Otherwise use direct connection
+	if (!Socket)
 	{
 		OutSize = 0;
 		return false;
@@ -1112,6 +1228,27 @@ bool FICEAgent::ReceiveData(uint8* Data, int32 MaxSize, int32& OutSize)
 void FICEAgent::Tick(float DeltaTime)
 {
 	TimeSinceLastAttempt += DeltaTime;
+
+	// Handle TURN allocation refresh if active
+	if (bTURNAllocationActive)
+	{
+		TimeSinceTURNRefresh += DeltaTime;
+		
+		// Refresh TURN allocation before it expires (refresh at 80% of lifetime)
+		float RefreshInterval = TURNAllocationLifetime * 0.8f;
+		if (TimeSinceTURNRefresh >= RefreshInterval)
+		{
+			UE_LOG(LogOnlineICE, Log, TEXT("TURN allocation needs refresh (%.1f seconds elapsed, lifetime: %d)"),
+				TimeSinceTURNRefresh, TURNAllocationLifetime);
+			
+			if (!PerformTURNRefresh())
+			{
+				UE_LOG(LogOnlineICE, Warning, TEXT("TURN refresh failed, allocation may expire"));
+				// Try to refresh again sooner
+				TimeSinceTURNRefresh = RefreshInterval - 30.0f; // Retry in 30 seconds
+			}
+		}
+	}
 
 	switch (ConnectionState)
 	{
@@ -1336,14 +1473,25 @@ bool FICEAgent::ProcessReceivedData()
 
 void FICEAgent::Close()
 {
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	
 	if (Socket)
 	{
-		ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
 		if (SocketSubsystem)
 		{
 			SocketSubsystem->DestroySocket(Socket);
 		}
 		Socket = nullptr;
+	}
+
+	// Clean up TURN socket and resources
+	if (TURNSocket)
+	{
+		if (SocketSubsystem)
+		{
+			SocketSubsystem->DestroySocket(TURNSocket);
+		}
+		TURNSocket = nullptr;
 	}
 
 	{
@@ -1354,10 +1502,14 @@ void FICEAgent::Close()
 	bIsConnected = false;
 	bHandshakeSent = false;
 	bHandshakeReceived = false;
+	bTURNAllocationActive = false;
 	DirectConnectionAttempts = 0;
 	TimeSinceLastAttempt = 0.0f;
 	TimeSinceHandshakeStart = 0.0f;
 	TimeSinceLastHandshakeSend = 0.0f;
+	TimeSinceTURNRefresh = 0.0f;
+	TURNServerAddr.Reset();
+	TURNRelayAddr.Reset();
 	LocalCandidates.Empty();
 	RemoteCandidates.Empty();
 }
@@ -1464,4 +1616,584 @@ void FICEAgent::CalculateHMACSHA1(const uint8* Data, int32 DataLen, const uint8*
 	OuterSHA1.Final();
 	
 	OuterSHA1.GetHash(OutHash);
+}
+
+bool FICEAgent::PerformTURNCreatePermission(const FString& PeerAddress, int32 PeerPort)
+{
+	if (!TURNSocket || !bTURNAllocationActive || !TURNServerAddr.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Cannot create TURN permission: TURN not allocated"));
+		return false;
+	}
+
+	UE_LOG(LogOnlineICE, Log, TEXT("Creating TURN permission for peer %s:%d"), *PeerAddress, PeerPort);
+
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	if (!SocketSubsystem)
+	{
+		return false;
+	}
+
+	// Parse peer address
+	TSharedPtr<FInternetAddr> PeerAddr = SocketSubsystem->GetAddressFromString(PeerAddress);
+	if (!PeerAddr.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Invalid peer address: %s"), *PeerAddress);
+		return false;
+	}
+	PeerAddr->SetPort(PeerPort);
+
+	// Build TURN CreatePermission Request (RFC 5766 Section 9)
+	TArray<uint8> Request;
+	Request.SetNum(512);
+	FMemory::Memzero(Request.GetData(), Request.Num());
+
+	int32 Offset = 0;
+
+	// Message Type: CreatePermission Request (0x0008)
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x08;
+
+	// Message Length: Will be set later
+	int32 LengthOffset = Offset;
+	Offset += 2;
+
+	// Magic Cookie
+	Request[Offset++] = 0x21;
+	Request[Offset++] = 0x12;
+	Request[Offset++] = 0xA4;
+	Request[Offset++] = 0x42;
+
+	// Transaction ID: Copy from last allocation or generate new
+	for (int32 i = 0; i < STUNConstants::TRANSACTION_ID_LENGTH; i++)
+	{
+		TURNTransactionID[i] = FMath::Rand() & 0xFF;
+		Request[Offset++] = TURNTransactionID[i];
+	}
+
+	// Add XOR-PEER-ADDRESS attribute (0x0012)
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x12;
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x08; // Length = 8 for IPv4
+
+	// Reserved + Family
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x01; // IPv4
+
+	// XOR-ed Port
+	uint16 XorPort = PeerPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
+	Request[Offset++] = (XorPort >> 8) & 0xFF;
+	Request[Offset++] = XorPort & 0xFF;
+
+	// XOR-ed IP address
+	uint32 PeerIPValue = 0;
+	// Parse IP address from string
+	TArray<FString> IPParts;
+	PeerAddress.ParseIntoArray(IPParts, TEXT("."));
+	if (IPParts.Num() == 4)
+	{
+		PeerIPValue = (FCString::Atoi(*IPParts[0]) << 24) |
+		              (FCString::Atoi(*IPParts[1]) << 16) |
+		              (FCString::Atoi(*IPParts[2]) << 8) |
+		              FCString::Atoi(*IPParts[3]);
+	}
+	uint32 XorIP = PeerIPValue ^ STUNConstants::MAGIC_COOKIE;
+	Request[Offset++] = (XorIP >> 24) & 0xFF;
+	Request[Offset++] = (XorIP >> 16) & 0xFF;
+	Request[Offset++] = (XorIP >> 8) & 0xFF;
+	Request[Offset++] = XorIP & 0xFF;
+
+	// Add USERNAME attribute (required for authenticated requests)
+	int32 UsernameLen = Config.TURNUsername.Len();
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x06;
+	Request[Offset++] = (UsernameLen >> 8) & 0xFF;
+	Request[Offset++] = UsernameLen & 0xFF;
+	for (int32 i = 0; i < UsernameLen; i++)
+	{
+		Request[Offset++] = Config.TURNUsername[i];
+	}
+	while (Offset % 4 != 0)
+	{
+		Request[Offset++] = 0x00;
+	}
+
+	// Set message length
+	int32 MessageLength = Offset - 20;
+	Request[LengthOffset] = (MessageLength >> 8) & 0xFF;
+	Request[LengthOffset + 1] = MessageLength & 0xFF;
+
+	// Resize to actual size
+	Request.SetNum(Offset);
+
+	// Send request
+	int32 BytesSent;
+	if (!TURNSocket->SendTo(Request.GetData(), Request.Num(), BytesSent, *TURNServerAddr))
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to send TURN CreatePermission request"));
+		return false;
+	}
+
+	// Wait for response
+	if (!TURNSocket->Wait(ESocketWaitConditions::WaitForRead, FTimespan::FromSeconds(5.0)))
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("TURN CreatePermission timeout"));
+		return false;
+	}
+
+	// Receive response
+	uint8 Response[1024];
+	int32 BytesRead = 0;
+	TSharedRef<FInternetAddr> FromAddr = SocketSubsystem->CreateInternetAddr();
+
+	if (!TURNSocket->RecvFrom(Response, sizeof(Response), BytesRead, *FromAddr))
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to receive TURN CreatePermission response"));
+		return false;
+	}
+
+	// Parse response
+	if (BytesRead >= 20)
+	{
+		uint16 MessageType = (Response[0] << 8) | Response[1];
+		
+		if (MessageType == 0x0108) // CreatePermission Success Response
+		{
+			UE_LOG(LogOnlineICE, Log, TEXT("TURN permission created successfully"));
+			return true;
+		}
+		else if (MessageType == 0x0118) // CreatePermission Error Response
+		{
+			UE_LOG(LogOnlineICE, Error, TEXT("TURN CreatePermission failed"));
+			return false;
+		}
+	}
+
+	return false;
+}
+
+bool FICEAgent::PerformTURNChannelBind(const FString& PeerAddress, int32 PeerPort, uint16 ChannelNumber)
+{
+	if (!TURNSocket || !bTURNAllocationActive || !TURNServerAddr.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Cannot bind TURN channel: TURN not allocated"));
+		return false;
+	}
+
+	UE_LOG(LogOnlineICE, Log, TEXT("Binding TURN channel 0x%04X for peer %s:%d"), 
+		ChannelNumber, *PeerAddress, PeerPort);
+
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	if (!SocketSubsystem)
+	{
+		return false;
+	}
+
+	// Build TURN ChannelBind Request (RFC 5766 Section 11)
+	TArray<uint8> Request;
+	Request.SetNum(512);
+	FMemory::Memzero(Request.GetData(), Request.Num());
+
+	int32 Offset = 0;
+
+	// Message Type: ChannelBind Request (0x0009)
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x09;
+
+	// Message Length: Will be set later
+	int32 LengthOffset = Offset;
+	Offset += 2;
+
+	// Magic Cookie
+	Request[Offset++] = 0x21;
+	Request[Offset++] = 0x12;
+	Request[Offset++] = 0xA4;
+	Request[Offset++] = 0x42;
+
+	// Transaction ID
+	for (int32 i = 0; i < STUNConstants::TRANSACTION_ID_LENGTH; i++)
+	{
+		TURNTransactionID[i] = FMath::Rand() & 0xFF;
+		Request[Offset++] = TURNTransactionID[i];
+	}
+
+	// Add CHANNEL-NUMBER attribute (0x000C)
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x0C;
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x04; // Length = 4
+
+	Request[Offset++] = (ChannelNumber >> 8) & 0xFF;
+	Request[Offset++] = ChannelNumber & 0xFF;
+	Request[Offset++] = 0x00; // Reserved
+	Request[Offset++] = 0x00; // Reserved
+
+	// Add XOR-PEER-ADDRESS attribute (0x0012)
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x12;
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x08; // Length = 8 for IPv4
+
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x01; // IPv4
+
+	uint16 XorPort = PeerPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
+	Request[Offset++] = (XorPort >> 8) & 0xFF;
+	Request[Offset++] = XorPort & 0xFF;
+
+	// Parse and XOR IP address
+	TArray<FString> IPParts;
+	PeerAddress.ParseIntoArray(IPParts, TEXT("."));
+	uint32 PeerIPValue = 0;
+	if (IPParts.Num() == 4)
+	{
+		PeerIPValue = (FCString::Atoi(*IPParts[0]) << 24) |
+		              (FCString::Atoi(*IPParts[1]) << 16) |
+		              (FCString::Atoi(*IPParts[2]) << 8) |
+		              FCString::Atoi(*IPParts[3]);
+	}
+	uint32 XorIP = PeerIPValue ^ STUNConstants::MAGIC_COOKIE;
+	Request[Offset++] = (XorIP >> 24) & 0xFF;
+	Request[Offset++] = (XorIP >> 16) & 0xFF;
+	Request[Offset++] = (XorIP >> 8) & 0xFF;
+	Request[Offset++] = XorIP & 0xFF;
+
+	// Add USERNAME attribute
+	int32 UsernameLen = Config.TURNUsername.Len();
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x06;
+	Request[Offset++] = (UsernameLen >> 8) & 0xFF;
+	Request[Offset++] = UsernameLen & 0xFF;
+	for (int32 i = 0; i < UsernameLen; i++)
+	{
+		Request[Offset++] = Config.TURNUsername[i];
+	}
+	while (Offset % 4 != 0)
+	{
+		Request[Offset++] = 0x00;
+	}
+
+	// Set message length
+	int32 MessageLength = Offset - 20;
+	Request[LengthOffset] = (MessageLength >> 8) & 0xFF;
+	Request[LengthOffset + 1] = MessageLength & 0xFF;
+
+	Request.SetNum(Offset);
+
+	// Send request
+	int32 BytesSent;
+	if (!TURNSocket->SendTo(Request.GetData(), Request.Num(), BytesSent, *TURNServerAddr))
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to send TURN ChannelBind request"));
+		return false;
+	}
+
+	// Wait for response
+	if (!TURNSocket->Wait(ESocketWaitConditions::WaitForRead, FTimespan::FromSeconds(5.0)))
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("TURN ChannelBind timeout"));
+		return false;
+	}
+
+	// Receive response
+	uint8 Response[1024];
+	int32 BytesRead = 0;
+	TSharedRef<FInternetAddr> FromAddr = SocketSubsystem->CreateInternetAddr();
+
+	if (!TURNSocket->RecvFrom(Response, sizeof(Response), BytesRead, *FromAddr))
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to receive TURN ChannelBind response"));
+		return false;
+	}
+
+	// Parse response
+	if (BytesRead >= 20)
+	{
+		uint16 MessageType = (Response[0] << 8) | Response[1];
+		
+		if (MessageType == 0x0109) // ChannelBind Success Response
+		{
+			UE_LOG(LogOnlineICE, Log, TEXT("TURN channel 0x%04X bound successfully"), ChannelNumber);
+			TURNChannelNumber = ChannelNumber;
+			return true;
+		}
+		else if (MessageType == 0x0119) // ChannelBind Error Response
+		{
+			UE_LOG(LogOnlineICE, Error, TEXT("TURN ChannelBind failed"));
+			return false;
+		}
+	}
+
+	return false;
+}
+
+bool FICEAgent::PerformTURNRefresh()
+{
+	if (!TURNSocket || !bTURNAllocationActive || !TURNServerAddr.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Cannot refresh TURN: allocation not active"));
+		return false;
+	}
+
+	UE_LOG(LogOnlineICE, Log, TEXT("Refreshing TURN allocation"));
+
+	// Build TURN Refresh Request (RFC 5766 Section 7)
+	TArray<uint8> Request;
+	Request.SetNum(512);
+	FMemory::Memzero(Request.GetData(), Request.Num());
+
+	int32 Offset = 0;
+
+	// Message Type: Refresh Request (0x0004)
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x04;
+
+	// Message Length: Will be set later
+	int32 LengthOffset = Offset;
+	Offset += 2;
+
+	// Magic Cookie
+	Request[Offset++] = 0x21;
+	Request[Offset++] = 0x12;
+	Request[Offset++] = 0xA4;
+	Request[Offset++] = 0x42;
+
+	// Transaction ID
+	for (int32 i = 0; i < STUNConstants::TRANSACTION_ID_LENGTH; i++)
+	{
+		TURNTransactionID[i] = FMath::Rand() & 0xFF;
+		Request[Offset++] = TURNTransactionID[i];
+	}
+
+	// Add LIFETIME attribute (0x000D) - request same lifetime
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x0D;
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x04; // Length = 4
+
+	Request[Offset++] = (TURNAllocationLifetime >> 24) & 0xFF;
+	Request[Offset++] = (TURNAllocationLifetime >> 16) & 0xFF;
+	Request[Offset++] = (TURNAllocationLifetime >> 8) & 0xFF;
+	Request[Offset++] = TURNAllocationLifetime & 0xFF;
+
+	// Add USERNAME attribute
+	int32 UsernameLen = Config.TURNUsername.Len();
+	Request[Offset++] = 0x00;
+	Request[Offset++] = 0x06;
+	Request[Offset++] = (UsernameLen >> 8) & 0xFF;
+	Request[Offset++] = UsernameLen & 0xFF;
+	for (int32 i = 0; i < UsernameLen; i++)
+	{
+		Request[Offset++] = Config.TURNUsername[i];
+	}
+	while (Offset % 4 != 0)
+	{
+		Request[Offset++] = 0x00;
+	}
+
+	// Set message length
+	int32 MessageLength = Offset - 20;
+	Request[LengthOffset] = (MessageLength >> 8) & 0xFF;
+	Request[LengthOffset + 1] = MessageLength & 0xFF;
+
+	Request.SetNum(Offset);
+
+	// Send request
+	int32 BytesSent;
+	if (!TURNSocket->SendTo(Request.GetData(), Request.Num(), BytesSent, *TURNServerAddr))
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to send TURN Refresh request"));
+		return false;
+	}
+
+	// Wait for response
+	if (!TURNSocket->Wait(ESocketWaitConditions::WaitForRead, FTimespan::FromSeconds(5.0)))
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("TURN Refresh timeout"));
+		return false;
+	}
+
+	// Receive response
+	uint8 Response[1024];
+	int32 BytesRead = 0;
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	if (!SocketSubsystem)
+	{
+		return false;
+	}
+	TSharedRef<FInternetAddr> FromAddr = SocketSubsystem->CreateInternetAddr();
+
+	if (!TURNSocket->RecvFrom(Response, sizeof(Response), BytesRead, *FromAddr))
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to receive TURN Refresh response"));
+		return false;
+	}
+
+	// Parse response
+	if (BytesRead >= 20)
+	{
+		uint16 MessageType = (Response[0] << 8) | Response[1];
+		
+		if (MessageType == 0x0104) // Refresh Success Response
+		{
+			UE_LOG(LogOnlineICE, Log, TEXT("TURN allocation refreshed successfully"));
+			TimeSinceTURNRefresh = 0.0f;
+			
+			// Update lifetime from response if present
+			int32 AttrOffset = 20;
+			while (AttrOffset < BytesRead)
+			{
+				if (AttrOffset + 4 > BytesRead) break;
+				
+				uint16 AttrType = (Response[AttrOffset] << 8) | Response[AttrOffset + 1];
+				uint16 AttrLength = (Response[AttrOffset + 2] << 8) | Response[AttrOffset + 3];
+				
+				if (AttrType == 0x000D && AttrLength == 4) // LIFETIME
+				{
+					if (AttrOffset + 8 <= BytesRead)
+					{
+						TURNAllocationLifetime = (Response[AttrOffset + 4] << 24) |
+						                         (Response[AttrOffset + 5] << 16) |
+						                         (Response[AttrOffset + 6] << 8) |
+						                         Response[AttrOffset + 7];
+						UE_LOG(LogOnlineICE, Log, TEXT("Updated TURN allocation lifetime: %d seconds"), 
+							TURNAllocationLifetime);
+					}
+					break;
+				}
+				
+				AttrOffset += 4 + ((AttrLength + 3) & ~3);
+			}
+			
+			return true;
+		}
+		else if (MessageType == 0x0114) // Refresh Error Response
+		{
+			UE_LOG(LogOnlineICE, Error, TEXT("TURN Refresh failed"));
+			bTURNAllocationActive = false;
+			return false;
+		}
+	}
+
+	return false;
+}
+
+bool FICEAgent::SendDataThroughTURN(const uint8* Data, int32 Size, const FString& PeerAddress, int32 PeerPort)
+{
+	if (!TURNSocket || !bTURNAllocationActive || !TURNServerAddr.IsValid())
+	{
+		return false;
+	}
+
+	// Use ChannelData if channel is bound (more efficient)
+	if (TURNChannelNumber >= STUNConstants::CHANNEL_NUMBER_MIN && TURNChannelNumber <= STUNConstants::CHANNEL_NUMBER_MAX)
+	{
+		// ChannelData format: Channel Number (2) | Length (2) | Application Data (variable)
+		TArray<uint8> ChannelData;
+		ChannelData.SetNum(4 + Size);
+		
+		// Channel number
+		ChannelData[0] = (TURNChannelNumber >> 8) & 0xFF;
+		ChannelData[1] = TURNChannelNumber & 0xFF;
+		
+		// Length
+		ChannelData[2] = (Size >> 8) & 0xFF;
+		ChannelData[3] = Size & 0xFF;
+		
+		// Application data
+		FMemory::Memcpy(&ChannelData[4], Data, Size);
+		
+		int32 BytesSent;
+		return TURNSocket->SendTo(ChannelData.GetData(), ChannelData.Num(), BytesSent, *TURNServerAddr);
+	}
+	else
+	{
+		// Use Send indication (RFC 5766 Section 10.1)
+		// This is less efficient but works without ChannelBind
+		UE_LOG(LogOnlineICE, Verbose, TEXT("Sending data through TURN using Send indication (channel not bound)"));
+		
+		// For now, we'll skip Send indication implementation and recommend using ChannelBind
+		// In production, you should implement Send indication here
+		return false;
+	}
+}
+
+bool FICEAgent::ReceiveDataFromTURN(uint8* Data, int32 MaxSize, int32& OutSize)
+{
+	if (!TURNSocket)
+	{
+		OutSize = 0;
+		return false;
+	}
+
+	uint8 ReceiveBuffer[2048];
+	int32 BytesRead = 0;
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	if (!SocketSubsystem)
+	{
+		OutSize = 0;
+		return false;
+	}
+	TSharedRef<FInternetAddr> FromAddr = SocketSubsystem->CreateInternetAddr();
+
+	if (!TURNSocket->RecvFrom(ReceiveBuffer, sizeof(ReceiveBuffer), BytesRead, *FromAddr))
+	{
+		OutSize = 0;
+		return false;
+	}
+
+	if (BytesRead < 4)
+	{
+		OutSize = 0;
+		return false;
+	}
+
+	// Check if this is ChannelData (first two bits are 01)
+	if ((ReceiveBuffer[0] & STUNConstants::PACKET_TYPE_MASK) == STUNConstants::PACKET_TYPE_CHANNEL_DATA)
+	{
+		// ChannelData format
+		uint16 ChannelNumber = (ReceiveBuffer[0] << 8) | ReceiveBuffer[1];
+		uint16 DataLength = (ReceiveBuffer[2] << 8) | ReceiveBuffer[3];
+		
+		if (BytesRead >= 4 + DataLength && DataLength <= MaxSize)
+		{
+			FMemory::Memcpy(Data, &ReceiveBuffer[4], DataLength);
+			OutSize = DataLength;
+			return true;
+		}
+	}
+	// Check if this is a STUN message (first two bits are 00)
+	else if ((ReceiveBuffer[0] & STUNConstants::PACKET_TYPE_MASK) == STUNConstants::PACKET_TYPE_STUN)
+	{
+		// This could be a Data indication (0x0017)
+		uint16 MessageType = (ReceiveBuffer[0] << 8) | ReceiveBuffer[1];
+		if (MessageType == 0x0017) // Data indication
+		{
+			// Parse DATA attribute (0x0013)
+			int32 AttrOffset = 20;
+			while (AttrOffset < BytesRead)
+			{
+				if (AttrOffset + 4 > BytesRead) break;
+				
+				uint16 AttrType = (ReceiveBuffer[AttrOffset] << 8) | ReceiveBuffer[AttrOffset + 1];
+				uint16 AttrLength = (ReceiveBuffer[AttrOffset + 2] << 8) | ReceiveBuffer[AttrOffset + 3];
+				
+				if (AttrType == 0x0013) // DATA
+				{
+					if (AttrOffset + 4 + AttrLength <= BytesRead && AttrLength <= MaxSize)
+					{
+						FMemory::Memcpy(Data, &ReceiveBuffer[AttrOffset + 4], AttrLength);
+						OutSize = AttrLength;
+						return true;
+					}
+				}
+				
+				AttrOffset += 4 + ((AttrLength + 3) & ~3);
+			}
+		}
+	}
+
+	OutSize = 0;
+	return false;
 }
