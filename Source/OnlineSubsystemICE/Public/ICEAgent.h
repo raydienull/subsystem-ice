@@ -344,6 +344,31 @@ private:
 	 */
 	bool VerifyHandshakeMagicNumber(const uint8* Buffer) const;
 
+	/**
+	 * Parse server address into host and port
+	 * @param ServerAddress - Server address string (host:port or just host)
+	 * @param OutHost - Parsed host name
+	 * @param OutPort - Parsed port (or default if not specified)
+	 * @param DefaultPort - Default port to use if not in address
+	 */
+	void ParseServerAddress(const FString& ServerAddress, FString& OutHost, int32& OutPort, int32 DefaultPort = 3478) const;
+
+	/**
+	 * Build a STUN binding request message
+	 * @param OutBuffer - Buffer to fill with STUN request (must be at least 20 bytes)
+	 */
+	void BuildSTUNBindingRequest(uint8* OutBuffer) const;
+
+	/**
+	 * Parse STUN response to extract XOR-MAPPED-ADDRESS
+	 * @param Response - Response buffer
+	 * @param ResponseSize - Size of response
+	 * @param OutPublicIP - Extracted public IP
+	 * @param OutPublicPort - Extracted public port
+	 * @return True if successfully parsed
+	 */
+	bool ParseSTUNResponse(const uint8* Response, int32 ResponseSize, FString& OutPublicIP, int32& OutPublicPort) const;
+
 	/** Gather host candidates (local network interfaces) */
 	void GatherHostCandidates();
 

@@ -257,25 +257,15 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 
 	// Parse server address
 	FString Host;
-	int32 Port = 3478; // Default STUN port
-	
-	int32 ColonPos;
-	if (ServerAddress.FindChar(':', ColonPos))
+	int32 Port;
+	ParseServerAddress(ServerAddress, Host, Port, 3478);
+
+	if (!ValidateSocketSubsystem())
 	{
-		Host = ServerAddress.Left(ColonPos);
-		Port = FCString::Atoi(*ServerAddress.Mid(ColonPos + 1));
-	}
-	else
-	{
-		Host = ServerAddress;
+		return false;
 	}
 
 	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
-	if (!SocketSubsystem)
-	{
-		UE_LOG(LogOnlineICE, Error, TEXT("Failed to get socket subsystem"));
-		return false;
-	}
 
 	// Resolve STUN server address
 	TSharedPtr<FInternetAddr> STUNAddr = SocketSubsystem->GetAddressFromString(Host);
@@ -284,7 +274,6 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to resolve STUN server: %s"), *Host);
 		return false;
 	}
-
 	STUNAddr->SetPort(Port);
 
 	// Create a temporary socket for STUN request
@@ -295,32 +284,10 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 		return false;
 	}
 
-	// Build STUN Binding Request
-	// STUN message format: Type (2 bytes) | Length (2 bytes) | Magic Cookie (4 bytes) | Transaction ID (12 bytes)
+	// Build and send STUN Binding Request
 	uint8 STUNRequest[20];
-	FMemory::Memzero(STUNRequest, sizeof(STUNRequest));
+	BuildSTUNBindingRequest(STUNRequest);
 
-	// Message Type: Binding Request (0x0001)
-	STUNRequest[0] = 0x00;
-	STUNRequest[1] = 0x01;
-
-	// Message Length: 0 (no attributes for basic request)
-	STUNRequest[2] = 0x00;
-	STUNRequest[3] = 0x00;
-
-	// Magic Cookie: 0x2112A442
-	STUNRequest[4] = 0x21;
-	STUNRequest[5] = 0x12;
-	STUNRequest[6] = 0xA4;
-	STUNRequest[7] = 0x42;
-
-	// Transaction ID: Random 12 bytes
-	for (int32 i = 8; i < 20; i++)
-	{
-		STUNRequest[i] = FMath::Rand() & 0xFF;
-	}
-
-	// Send STUN request
 	int32 BytesSent;
 	if (!STUNSocket->SendTo(STUNRequest, sizeof(STUNRequest), BytesSent, *STUNAddr))
 	{
@@ -349,70 +316,20 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 		return false;
 	}
 
-	// Parse STUN response (simplified)
-	if (BytesRead >= 20)
+	// Parse STUN response
+	bool bSuccess = ParseSTUNResponse(STUNResponse, BytesRead, OutPublicIP, OutPublicPort);
+	
+	if (bSuccess)
 	{
-		uint16 MessageType = (STUNResponse[0] << 8) | STUNResponse[1];
-		uint16 MessageLength = (STUNResponse[2] << 8) | STUNResponse[3];
-
-		// Check if it's a Binding Response (0x0101)
-		if (MessageType == 0x0101 && BytesRead >= 20 + MessageLength)
-		{
-			// Parse attributes to find XOR-MAPPED-ADDRESS (0x0020)
-			int32 Offset = 20;
-			while (Offset < BytesRead)
-			{
-				if (Offset + 4 > BytesRead) break;
-
-				uint16 AttrType = (STUNResponse[Offset] << 8) | STUNResponse[Offset + 1];
-				uint16 AttrLength = (STUNResponse[Offset + 2] << 8) | STUNResponse[Offset + 3];
-
-				if (AttrType == 0x0020 && AttrLength >= 8) // XOR-MAPPED-ADDRESS
-				{
-					// Ensure we have enough bytes to read the attribute value
-					if (Offset + 4 + AttrLength > BytesRead)
-					{
-						UE_LOG(LogOnlineICE, Warning, TEXT("Incomplete XOR-MAPPED-ADDRESS attribute"));
-						break;
-					}
-
-					// Family (1 byte at offset 5)
-					uint8 Family = STUNResponse[Offset + 5];
-
-					if (Family == 0x01) // IPv4
-					{
-						// XOR-ed Port (2 bytes at offset 6-7)
-						uint16 XorPort = (STUNResponse[Offset + 6] << 8) | STUNResponse[Offset + 7];
-						OutPublicPort = XorPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
-
-						// XOR-ed IP (4 bytes at offset 8-11)
-						uint32 XorIP = (STUNResponse[Offset + 8] << 24) | (STUNResponse[Offset + 9] << 16) |
-						              (STUNResponse[Offset + 10] << 8) | STUNResponse[Offset + 11];
-						uint32 PublicIPValue = XorIP ^ STUNConstants::MAGIC_COOKIE;
-
-						// Convert to string
-						OutPublicIP = FString::Printf(TEXT("%d.%d.%d.%d"),
-							(PublicIPValue >> 24) & 0xFF,
-							(PublicIPValue >> 16) & 0xFF,
-							(PublicIPValue >> 8) & 0xFF,
-							PublicIPValue & 0xFF);
-
-						UE_LOG(LogOnlineICE, Log, TEXT("STUN discovered public address: %s:%d"), *OutPublicIP, OutPublicPort);
-
-						SocketSubsystem->DestroySocket(STUNSocket);
-						return true;
-					}
-				}
-
-				// Move to next attribute (pad to 4-byte boundary)
-				Offset += 4 + ((AttrLength + 3) & ~3);
-			}
-		}
+		UE_LOG(LogOnlineICE, Log, TEXT("STUN discovered public address: %s:%d"), *OutPublicIP, OutPublicPort);
+	}
+	else
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Failed to parse STUN response"));
 	}
 
-	UE_LOG(LogOnlineICE, Warning, TEXT("Failed to parse STUN response"));
 	SocketSubsystem->DestroySocket(STUNSocket);
-	return false;
+	return bSuccess;
 }
 
 bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FString& Username, const FString& Credential, FString& OutRelayIP, int32& OutRelayPort)
@@ -1624,6 +1541,109 @@ bool FICEAgent::VerifyHandshakeMagicNumber(const uint8* Buffer) const
 		}
 	}
 	return true;
+}
+
+void FICEAgent::ParseServerAddress(const FString& ServerAddress, FString& OutHost, int32& OutPort, int32 DefaultPort) const
+{
+	int32 ColonPos;
+	if (ServerAddress.FindChar(':', ColonPos))
+	{
+		OutHost = ServerAddress.Left(ColonPos);
+		OutPort = FCString::Atoi(*ServerAddress.Mid(ColonPos + 1));
+	}
+	else
+	{
+		OutHost = ServerAddress;
+		OutPort = DefaultPort;
+	}
+}
+
+void FICEAgent::BuildSTUNBindingRequest(uint8* OutBuffer) const
+{
+	FMemory::Memzero(OutBuffer, 20);
+
+	// Message Type: Binding Request (0x0001)
+	OutBuffer[0] = 0x00;
+	OutBuffer[1] = 0x01;
+
+	// Message Length: 0 (no attributes for basic request)
+	OutBuffer[2] = 0x00;
+	OutBuffer[3] = 0x00;
+
+	// Magic Cookie: 0x2112A442
+	OutBuffer[4] = 0x21;
+	OutBuffer[5] = 0x12;
+	OutBuffer[6] = 0xA4;
+	OutBuffer[7] = 0x42;
+
+	// Transaction ID: Random 12 bytes
+	for (int32 i = 8; i < 20; i++)
+	{
+		OutBuffer[i] = FMath::Rand() & 0xFF;
+	}
+}
+
+bool FICEAgent::ParseSTUNResponse(const uint8* Response, int32 ResponseSize, FString& OutPublicIP, int32& OutPublicPort) const
+{
+	if (ResponseSize < 20)
+	{
+		return false;
+	}
+
+	uint16 MessageType = (Response[0] << 8) | Response[1];
+	uint16 MessageLength = (Response[2] << 8) | Response[3];
+
+	// Check if it's a Binding Response (0x0101)
+	if (MessageType != 0x0101 || ResponseSize < 20 + MessageLength)
+	{
+		return false;
+	}
+
+	// Parse attributes to find XOR-MAPPED-ADDRESS (0x0020)
+	int32 Offset = 20;
+	while (Offset < ResponseSize)
+	{
+		if (Offset + 4 > ResponseSize) break;
+
+		uint16 AttrType = (Response[Offset] << 8) | Response[Offset + 1];
+		uint16 AttrLength = (Response[Offset + 2] << 8) | Response[Offset + 3];
+
+		if (AttrType == 0x0020 && AttrLength >= 8) // XOR-MAPPED-ADDRESS
+		{
+			if (Offset + 4 + AttrLength > ResponseSize)
+			{
+				UE_LOG(LogOnlineICE, Warning, TEXT("Incomplete XOR-MAPPED-ADDRESS attribute"));
+				break;
+			}
+
+			uint8 Family = Response[Offset + 5];
+			if (Family == 0x01) // IPv4
+			{
+				// XOR-ed Port (2 bytes at offset 6-7)
+				uint16 XorPort = (Response[Offset + 6] << 8) | Response[Offset + 7];
+				OutPublicPort = XorPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
+
+				// XOR-ed IP (4 bytes at offset 8-11)
+				uint32 XorIP = (Response[Offset + 8] << 24) | (Response[Offset + 9] << 16) |
+				              (Response[Offset + 10] << 8) | Response[Offset + 11];
+				uint32 PublicIPValue = XorIP ^ STUNConstants::MAGIC_COOKIE;
+
+				// Convert to string
+				OutPublicIP = FString::Printf(TEXT("%d.%d.%d.%d"),
+					(PublicIPValue >> 24) & 0xFF,
+					(PublicIPValue >> 16) & 0xFF,
+					(PublicIPValue >> 8) & 0xFF,
+					PublicIPValue & 0xFF);
+
+				return true;
+			}
+		}
+
+		// Move to next attribute (pad to 4-byte boundary)
+		Offset += 4 + ((AttrLength + 3) & ~3);
+	}
+
+	return false;
 }
 
 FString FICEAgent::GetConnectionStateName(EICEConnectionState State) const
