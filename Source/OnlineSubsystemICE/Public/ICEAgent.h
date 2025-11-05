@@ -313,6 +313,37 @@ private:
 	 */
 	FICECandidate SelectHighestPriorityCandidate(const TArray<FICECandidate>& Candidates) const;
 
+	/**
+	 * Handle Tick logic for direct connection state
+	 * @param DeltaTime - Time elapsed since last tick
+	 */
+	void TickConnectingDirect(float DeltaTime);
+
+	/**
+	 * Handle Tick logic for relay connection state
+	 * @param DeltaTime - Time elapsed since last tick
+	 */
+	void TickConnectingRelay(float DeltaTime);
+
+	/**
+	 * Handle Tick logic for handshake state
+	 * @param DeltaTime - Time elapsed since last tick
+	 */
+	void TickPerformingHandshake(float DeltaTime);
+
+	/**
+	 * Validate socket subsystem is available
+	 * @return True if socket subsystem is valid, false otherwise
+	 */
+	bool ValidateSocketSubsystem() const;
+
+	/**
+	 * Verify handshake packet magic number
+	 * @param Buffer - Buffer containing packet data
+	 * @return True if magic number is valid
+	 */
+	bool VerifyHandshakeMagicNumber(const uint8* Buffer) const;
+
 	/** Gather host candidates (local network interfaces) */
 	void GatherHostCandidates();
 
