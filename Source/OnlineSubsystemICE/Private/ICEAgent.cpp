@@ -47,9 +47,16 @@ FICECandidate FICECandidate::FromString(const FString& CandidateString)
 {
 	FICECandidate Candidate;
 	
+	// Strip "candidate:" prefix if present
+	FString ParseString = CandidateString;
+	if (ParseString.StartsWith(TEXT("candidate:")))
+	{
+		ParseString = ParseString.RightChop(10); // Remove "candidate:" (10 characters)
+	}
+	
 	// Parse ICE candidate string (simplified parser)
 	TArray<FString> Parts;
-	CandidateString.ParseIntoArray(Parts, TEXT(" "));
+	ParseString.ParseIntoArray(Parts, TEXT(" "));
 	
 	if (Parts.Num() >= 8)
 	{
@@ -152,7 +159,9 @@ void FICEAgent::GatherHostCandidates()
 	HostCandidate.Transport = TEXT("UDP");
 	HostCandidate.Priority = CalculatePriority(EICECandidateType::Host, 65535, 1);
 	HostCandidate.Address = LocalAddr->ToString(false);
-	HostCandidate.Port = 0; // Will be assigned when socket is created
+	// Port will be assigned when socket is created during connectivity checks
+	// We use 0 to indicate "any available port"
+	HostCandidate.Port = 0;
 	HostCandidate.Type = EICECandidateType::Host;
 
 	LocalCandidates.Add(HostCandidate);
@@ -958,11 +967,84 @@ bool FICEAgent::StartConnectivityChecks()
 	}
 	RemoteAddr->SetPort(SelectedRemoteCandidate.Port);
 
+	// Parse local candidate address for binding
+	TSharedPtr<FInternetAddr> LocalAddr = SocketSubsystem->GetAddressFromString(SelectedLocalCandidate.Address);
+	if (!LocalAddr.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to parse local address: %s"), *SelectedLocalCandidate.Address);
+		return false;
+	}
+	
+	// For server reflexive and relay candidates, we need to bind to the local interface (0.0.0.0)
+	// and let the OS assign a port, as we can't bind directly to the public/relay address
+	if (SelectedLocalCandidate.Type == EICECandidateType::ServerReflexive || 
+	    SelectedLocalCandidate.Type == EICECandidateType::Relayed)
+	{
+		// Bind to any address (0.0.0.0) and let OS assign port
+		LocalAddr->SetAnyAddress();
+		LocalAddr->SetPort(0); // OS will assign an ephemeral port
+	}
+	else
+	{
+		// For host candidates, we can bind to the specific local address
+		LocalAddr->SetPort(SelectedLocalCandidate.Port);
+	}
+
 	Socket = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("ICE"), RemoteAddr->GetProtocolType());
 	if (!Socket)
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to create ICE socket"));
 		return false;
+	}
+
+	// Bind socket to local address
+	if (!Socket->Bind(*LocalAddr))
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to bind socket to local address: %s:%d"), 
+			*LocalAddr->ToString(false), LocalAddr->GetPort());
+		SocketSubsystem->DestroySocket(Socket);
+		Socket = nullptr;
+		return false;
+	}
+
+	// Set socket to non-blocking mode for async operations
+	Socket->SetNonBlocking(true);
+	
+	// Enable address reuse to allow multiple ICE agents or reconnections on the same port
+	// This is necessary for ICE as we may need to quickly rebind after connection failures
+	Socket->SetReuseAddr(true);
+	
+	// Disable receive error notifications to prevent socket from becoming invalid on ICMP errors
+	Socket->SetRecvErr(false);
+
+	// Get the actual bound port
+	TSharedRef<FInternetAddr> BoundAddr = SocketSubsystem->CreateInternetAddr();
+	if (Socket->GetAddress(*BoundAddr))
+	{
+		int32 ActualPort = BoundAddr->GetPort();
+		UE_LOG(LogOnlineICE, Log, TEXT("Socket bound to %s:%d"), 
+			*BoundAddr->ToString(false), ActualPort);
+		
+		// Update local candidate port if it was 0 (OS assigned)
+		if (SelectedLocalCandidate.Port == 0)
+		{
+			SelectedLocalCandidate.Port = ActualPort;
+			
+			// Also update the port in the LocalCandidates array for future use
+			for (FICECandidate& Candidate : LocalCandidates)
+			{
+				if (Candidate.Address == SelectedLocalCandidate.Address && 
+				    Candidate.Type == SelectedLocalCandidate.Type &&
+				    Candidate.Port == 0)
+				{
+					Candidate.Port = ActualPort;
+					UE_LOG(LogOnlineICE, Log, TEXT("Updated local candidate port to %d in candidates list"), ActualPort);
+					break;
+				}
+			}
+			
+			UE_LOG(LogOnlineICE, Log, TEXT("Updated selected local candidate port to %d"), ActualPort);
+		}
 	}
 
 	// Start handshake to verify bidirectional connection
