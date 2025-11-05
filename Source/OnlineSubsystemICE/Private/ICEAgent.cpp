@@ -394,7 +394,7 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 
 	// First attempt: Send request without authentication to get realm and nonce
 	// The server will respond with 401 Unauthorized if authentication is required
-	bool bSuccess = PerformTURNAllocationRequest(TURNSocket, TURNAddr, Username, Credential, FString(), FString(), OutRelayIP, OutRelayPort, false);
+	bool bSuccess = PerformTURNAllocationRequest(TURNAddr, Username, Credential, FString(), FString(), OutRelayIP, OutRelayPort, false);
 	
 	if (bSuccess)
 	{
@@ -749,7 +749,7 @@ bool FICEAgent::PerformTURNAllocationRequest(const TSharedPtr<FInternetAddr>& TU
 				UE_LOG(LogOnlineICE, Log, TEXT("Realm: %s, Nonce: %s"), *ErrorRealm, *ErrorNonce);
 				
 				// Retry with authentication (set bIsRetry to true to prevent infinite loops)
-				return PerformTURNAllocationRequest(TURNSocket, TURNAddr, Username, Credential, 
+				return PerformTURNAllocationRequest(TURNAddr, Username, Credential, 
 					ErrorRealm, ErrorNonce, OutRelayIP, OutRelayPort, true);
 			}
 			
