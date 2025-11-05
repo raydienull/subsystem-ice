@@ -871,13 +871,15 @@ bool FICEAgent::StartConnectivityChecks()
 	TimeSinceHandshakeStart = 0.0f;
 	TimeSinceLastHandshakeSend = 0.0f;
 
+	// Seleccionar candidatos según la estrategia (directo o relay)
+	bool bUsingRelay = false;
+	
 	// Intentar primero con candidatos directos (host y server reflexive)
 	if (DirectConnectionAttempts < MAX_DIRECT_ATTEMPTS)
 	{
-		UpdateConnectionState(EICEConnectionState::ConnectingDirect);
 		DirectConnectionAttempts++;
 
-		// Seleccionar candidatos priorizando host y server reflexive
+		// Filtrar candidatos directos
 		TArray<FICECandidate> DirectLocalCandidates;
 		TArray<FICECandidate> DirectRemoteCandidates;
 
@@ -897,12 +899,13 @@ bool FICEAgent::StartConnectivityChecks()
 			}
 		}
 
+		// Si hay candidatos directos disponibles, seleccionarlos
 		if (DirectLocalCandidates.Num() > 0 && DirectRemoteCandidates.Num() > 0)
 		{
-			// Seleccionar candidatos de mayor prioridad
 			SelectedLocalCandidate = SelectHighestPriorityCandidate(DirectLocalCandidates);
 			SelectedRemoteCandidate = SelectHighestPriorityCandidate(DirectRemoteCandidates);
 
+			UpdateConnectionState(EICEConnectionState::ConnectingDirect);
 			UE_LOG(LogOnlineICE, Log, TEXT("Attempting direct connection (try %d/%d) - Local: %s (priority: %d), Remote: %s (priority: %d)"),
 				DirectConnectionAttempts, MAX_DIRECT_ATTEMPTS,
 				*SelectedLocalCandidate.ToString(), SelectedLocalCandidate.Priority,
@@ -910,18 +913,25 @@ bool FICEAgent::StartConnectivityChecks()
 		}
 		else
 		{
-			UE_LOG(LogOnlineICE, Warning, TEXT("No direct candidates available (Local: %d, Remote: %d), falling back to relay"),
+			UE_LOG(LogOnlineICE, Warning, TEXT("No direct candidates available (Local: %d, Remote: %d), skipping to relay"),
 				DirectLocalCandidates.Num(), DirectRemoteCandidates.Num());
-			UpdateConnectionState(EICEConnectionState::ConnectingRelay);
+			// Marcar para usar relay inmediatamente
+			DirectConnectionAttempts = MAX_DIRECT_ATTEMPTS;
+			bUsingRelay = true;
 		}
 	}
 	else
 	{
-		// Si los intentos directos fallaron, intentar con candidatos relay
-		UpdateConnectionState(EICEConnectionState::ConnectingRelay);
-		UE_LOG(LogOnlineICE, Log, TEXT("Direct connection attempts failed, trying relay candidates"));
+		// Los intentos directos se agotaron, usar relay
+		bUsingRelay = true;
+	}
 
-		// Seleccionar candidatos relay
+	// Si necesitamos usar relay, seleccionar candidatos relay
+	if (bUsingRelay)
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Direct connection attempts exhausted or unavailable, trying relay candidates"));
+
+		// Filtrar candidatos relay
 		TArray<FICECandidate> RelayLocalCandidates;
 		TArray<FICECandidate> RelayRemoteCandidates;
 
@@ -941,23 +951,33 @@ bool FICEAgent::StartConnectivityChecks()
 			}
 		}
 
+		// Verificar si hay candidatos relay disponibles
 		if (RelayLocalCandidates.Num() > 0 && RelayRemoteCandidates.Num() > 0)
 		{
-			// Seleccionar candidatos relay de mayor prioridad
 			SelectedLocalCandidate = SelectHighestPriorityCandidate(RelayLocalCandidates);
 			SelectedRemoteCandidate = SelectHighestPriorityCandidate(RelayRemoteCandidates);
 
+			UpdateConnectionState(EICEConnectionState::ConnectingRelay);
 			UE_LOG(LogOnlineICE, Log, TEXT("Selected relay candidates - Local: %s (priority: %d), Remote: %s (priority: %d)"),
 				*SelectedLocalCandidate.ToString(), SelectedLocalCandidate.Priority,
 				*SelectedRemoteCandidate.ToString(), SelectedRemoteCandidate.Priority);
 		}
 		else
 		{
-			UE_LOG(LogOnlineICE, Error, TEXT("No relay candidates available after direct connection failed (Local relay: %d, Remote relay: %d)"),
+			UE_LOG(LogOnlineICE, Error, TEXT("No relay candidates available (Local relay: %d, Remote relay: %d)"),
 				RelayLocalCandidates.Num(), RelayRemoteCandidates.Num());
 			UpdateConnectionState(EICEConnectionState::Failed);
 			return false;
 		}
+	}
+
+	// Validar que tenemos candidatos seleccionados válidos antes de continuar
+	if (!SelectedLocalCandidate.IsValid() || !SelectedRemoteCandidate.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Selected candidates are invalid - Local: %s, Remote: %s"),
+			*SelectedLocalCandidate.ToString(), *SelectedRemoteCandidate.ToString());
+		UpdateConnectionState(EICEConnectionState::Failed);
+		return false;
 	}
 
 	// Create socket for communication
@@ -1298,6 +1318,13 @@ bool FICEAgent::SendHandshake()
 		return false;
 	}
 
+	// Validar que tenemos un candidato remoto válido
+	if (!SelectedRemoteCandidate.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Cannot send handshake: selected remote candidate is invalid"));
+		return false;
+	}
+
 	// Create simple handshake packet
 	// Format: [Magic Number (4 bytes)] [Type (1 byte)] [Timestamp (4 bytes)]
 	uint8 HandshakePacket[HandshakeConstants::HANDSHAKE_PACKET_SIZE];
@@ -1321,7 +1348,7 @@ bool FICEAgent::SendHandshake()
 	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->GetAddressFromString(SelectedRemoteCandidate.Address);
 	if (!RemoteAddr.IsValid())
 	{
-		UE_LOG(LogOnlineICE, Error, TEXT("Cannot send handshake: invalid remote address"));
+		UE_LOG(LogOnlineICE, Error, TEXT("Cannot send handshake: failed to parse remote address '%s'"), *SelectedRemoteCandidate.Address);
 		return false;
 	}
 	RemoteAddr->SetPort(SelectedRemoteCandidate.Port);

@@ -65,6 +65,15 @@ struct FICECandidate
 
 	FString ToString() const;
 	static FICECandidate FromString(const FString& CandidateString);
+	
+	/**
+	 * Check if this candidate is valid (has non-empty address)
+	 * @return True if the candidate has a valid address and port
+	 */
+	bool IsValid() const
+	{
+		return !Address.IsEmpty() && Port > 0;
+	}
 };
 
 /**
