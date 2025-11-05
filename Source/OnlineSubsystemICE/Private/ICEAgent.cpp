@@ -111,6 +111,7 @@ FICEAgent::FICEAgent(const FICEAgentConfig& InConfig)
 	, bIsConnected(false)
 	, ConnectionState(EICEConnectionState::New)
 	, DirectConnectionAttempts(0)
+	, TotalConnectionAttempts(0)
 	, RetryDelay(1.0f)
 	, TimeSinceLastAttempt(0.0f)
 	, bHandshakeSent(false)
@@ -917,13 +918,15 @@ bool FICEAgent::StartConnectivityChecks()
 	}
 
 	// Evitar reintentos infinitos - límite total de intentos
-	const int32 MAX_TOTAL_ATTEMPTS = 10;
-	if (DirectConnectionAttempts >= MAX_TOTAL_ATTEMPTS)
+	if (TotalConnectionAttempts >= MAX_TOTAL_ATTEMPTS)
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Max total connection attempts (%d) reached, giving up"), MAX_TOTAL_ATTEMPTS);
 		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
+
+	// Incrementar contador total de intentos
+	TotalConnectionAttempts++;
 
 	if (LocalCandidates.Num() == 0 || RemoteCandidates.Num() == 0)
 	{
@@ -1127,9 +1130,7 @@ bool FICEAgent::StartConnectivityChecks()
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to bind socket to local address: %s:%d"), 
 			*LocalAddr->ToString(false), LocalAddr->GetPort());
-		SocketSubsystem->DestroySocket(Socket);
-		Socket = nullptr;
-		UpdateConnectionState(EICEConnectionState::Failed);
+		CleanupSocketOnError();
 		return false;
 	}
 
@@ -1181,18 +1182,14 @@ bool FICEAgent::StartConnectivityChecks()
 		if (!bTURNAllocationActive)
 		{
 			UE_LOG(LogOnlineICE, Error, TEXT("Selected relay candidate but TURN allocation is not active"));
-			SocketSubsystem->DestroySocket(Socket);
-			Socket = nullptr;
-			UpdateConnectionState(EICEConnectionState::Failed);
+			CleanupSocketOnError();
 			return false;
 		}
 
 		if (!TURNSocket)
 		{
 			UE_LOG(LogOnlineICE, Error, TEXT("Selected relay candidate but TURN socket is not available"));
-			SocketSubsystem->DestroySocket(Socket);
-			Socket = nullptr;
-			UpdateConnectionState(EICEConnectionState::Failed);
+			CleanupSocketOnError();
 			return false;
 		}
 
@@ -1584,6 +1581,7 @@ void FICEAgent::Close()
 	bHandshakeReceived = false;
 	bTURNAllocationActive = false;
 	DirectConnectionAttempts = 0;
+	TotalConnectionAttempts = 0;
 	TimeSinceLastAttempt = 0.0f;
 	TimeSinceHandshakeStart = 0.0f;
 	TimeSinceLastHandshakeSend = 0.0f;
@@ -1623,6 +1621,20 @@ void FICEAgent::CompleteHandshake()
 		UpdateConnectionState(EICEConnectionState::Connected);
 		UE_LOG(LogOnlineICE, Log, TEXT("ICE connection fully established - handshake complete"));
 	}
+}
+
+void FICEAgent::CleanupSocketOnError()
+{
+	if (Socket)
+	{
+		ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+		if (SocketSubsystem)
+		{
+			SocketSubsystem->DestroySocket(Socket);
+		}
+		Socket = nullptr;
+	}
+	UpdateConnectionState(EICEConnectionState::Failed);
 }
 
 FString FICEAgent::GetConnectionStateName(EICEConnectionState State) const

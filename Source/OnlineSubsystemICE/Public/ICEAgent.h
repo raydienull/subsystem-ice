@@ -244,8 +244,14 @@ private:
 	/** Number of direct connection attempts made */
 	int32 DirectConnectionAttempts;
 
+	/** Total number of connection attempts (direct + relay) */
+	int32 TotalConnectionAttempts;
+
 	/** Maximum number of direct connection attempts before falling back to TURN */
 	static constexpr int32 MAX_DIRECT_ATTEMPTS = 3;
+
+	/** Maximum total connection attempts before giving up */
+	static constexpr int32 MAX_TOTAL_ATTEMPTS = 10;
 
 	/** Delay between connection attempts (seconds) */
 	float RetryDelay;
@@ -293,6 +299,12 @@ private:
 	 * Called when both send and receive handshake have completed
 	 */
 	void CompleteHandshake();
+
+	/**
+	 * Clean up the socket and update state to Failed
+	 * Helper method to reduce code duplication in error paths
+	 */
+	void CleanupSocketOnError();
 
 	/** Gather host candidates (local network interfaces) */
 	void GatherHostCandidates();
