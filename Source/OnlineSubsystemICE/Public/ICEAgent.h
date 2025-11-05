@@ -67,12 +67,12 @@ struct FICECandidate
 	static FICECandidate FromString(const FString& CandidateString);
 	
 	/**
-	 * Check if this candidate is valid (has non-empty address)
-	 * @return True if the candidate has a valid address and port
+	 * Check if this candidate is valid (has non-empty address and valid port)
+	 * @return True if the candidate has a valid address and port in range [1, 65535]
 	 */
 	bool IsValid() const
 	{
-		return !Address.IsEmpty() && Port > 0;
+		return !Address.IsEmpty() && Port > 0 && Port <= 65535;
 	}
 };
 
@@ -437,4 +437,12 @@ private:
 	 * @return Filtered array of candidates matching the type
 	 */
 	TArray<FICECandidate> FilterCandidatesByType(const TArray<FICECandidate>& Candidates, EICECandidateType Type) const;
+
+	/**
+	 * Helper function to filter candidates by multiple types (more efficient for multiple types)
+	 * @param Candidates - Source array of candidates
+	 * @param Types - Array of types to filter for
+	 * @return Filtered array of candidates matching any of the types
+	 */
+	TArray<FICECandidate> FilterCandidatesByTypes(const TArray<FICECandidate>& Candidates, const TArray<EICECandidateType>& Types) const;
 };

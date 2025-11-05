@@ -879,13 +879,11 @@ bool FICEAgent::StartConnectivityChecks()
 	{
 		DirectConnectionAttempts++;
 
-		// Filter direct candidates (host and server reflexive)
-		// Note: Combine both types for simplicity, as both are direct connections
-		TArray<FICECandidate> DirectLocalCandidates = FilterCandidatesByType(LocalCandidates, EICECandidateType::Host);
-		DirectLocalCandidates.Append(FilterCandidatesByType(LocalCandidates, EICECandidateType::ServerReflexive));
-		
-		TArray<FICECandidate> DirectRemoteCandidates = FilterCandidatesByType(RemoteCandidates, EICECandidateType::Host);
-		DirectRemoteCandidates.Append(FilterCandidatesByType(RemoteCandidates, EICECandidateType::ServerReflexive));
+		// Filter direct candidates (host and server reflexive) in a single pass
+		// Note: Both types are direct connections
+		TArray<EICECandidateType> DirectTypes = { EICECandidateType::Host, EICECandidateType::ServerReflexive };
+		TArray<FICECandidate> DirectLocalCandidates = FilterCandidatesByTypes(LocalCandidates, DirectTypes);
+		TArray<FICECandidate> DirectRemoteCandidates = FilterCandidatesByTypes(RemoteCandidates, DirectTypes);
 
 		// If direct candidates are available, select them
 		if (DirectLocalCandidates.Num() > 0 && DirectRemoteCandidates.Num() > 0)
@@ -2266,6 +2264,19 @@ void FICEAgent::AppendTURNUsernameAttribute(TArray<uint8>& Buffer, int32& Offset
 {
 	// Add USERNAME attribute (0x0006)
 	int32 UsernameLen = Username.Len();
+	
+	// Calculate required space: 4 bytes header + username + padding (max 3 bytes)
+	int32 RequiredSpace = 4 + UsernameLen + 3;
+	
+	// Ensure buffer has enough space
+	if (Offset + RequiredSpace > Buffer.Num())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Buffer too small for USERNAME attribute (needs %d bytes, has %d)"), 
+			Offset + RequiredSpace, Buffer.Num());
+		return;
+	}
+	
+	// Write attribute header
 	Buffer[Offset++] = 0x00;
 	Buffer[Offset++] = 0x06;
 	Buffer[Offset++] = (UsernameLen >> 8) & 0xFF;
@@ -2292,6 +2303,23 @@ TArray<FICECandidate> FICEAgent::FilterCandidatesByType(const TArray<FICECandida
 		if (Candidate.Type == Type)
 		{
 			Filtered.Add(Candidate);
+		}
+	}
+	return Filtered;
+}
+
+TArray<FICECandidate> FICEAgent::FilterCandidatesByTypes(const TArray<FICECandidate>& Candidates, const TArray<EICECandidateType>& Types) const
+{
+	TArray<FICECandidate> Filtered;
+	for (const FICECandidate& Candidate : Candidates)
+	{
+		for (const EICECandidateType& Type : Types)
+		{
+			if (Candidate.Type == Type)
+			{
+				Filtered.Add(Candidate);
+				break; // No need to check other types once we found a match
+			}
 		}
 	}
 	return Filtered;
