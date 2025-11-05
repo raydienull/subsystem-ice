@@ -941,7 +941,10 @@ bool FICEAgent::StartConnectivityChecks()
 		}
 	}
 
-	// Validate that candidates have addresses (port may be 0 for host candidates, assigned during bind)
+	// Validate that candidates have addresses
+	// Note: Local host candidates may have port 0, which will be assigned by OS during bind.
+	// Server reflexive and relay candidates always have their ports set during gathering, but they
+	// also bind to port 0 for actual socket operations (OS assigns ephemeral port).
 	if (SelectedLocalCandidate.Address.IsEmpty() || SelectedRemoteCandidate.Address.IsEmpty())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Selected candidates have empty addresses - Local: %s, Remote: %s"),
@@ -950,7 +953,7 @@ bool FICEAgent::StartConnectivityChecks()
 		return false;
 	}
 	
-	// Validate remote candidate port (must be set, as it comes from peer)
+	// Validate remote candidate port (must be set, as it comes from peer and is used for sending)
 	if (!SelectedRemoteCandidate.IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Selected remote candidate is invalid: %s"),
