@@ -74,10 +74,7 @@ FOnlineSessionICE::FOnlineSessionICE(FOnlineSubsystemICE* InSubsystem)
 	UE_LOG(LogOnlineICE, Log, TEXT("OnlineSessionICE initialized"));
 }
 
-FOnlineSessionICE::~FOnlineSessionICE()
-{
-	// Cleanup
-}
+FOnlineSessionICE::~FOnlineSessionICE() = default;
 
 bool FOnlineSessionICE::CreateSession(int32 HostingPlayerNum, FName SessionName, const FOnlineSessionSettings& NewSessionSettings)
 {
@@ -136,6 +133,7 @@ bool FOnlineSessionICE::CreateSession(int32 HostingPlayerNum, FName SessionName,
 
 bool FOnlineSessionICE::CreateSession(const FUniqueNetId& HostingPlayerId, FName SessionName, const FOnlineSessionSettings& NewSessionSettings)
 {
+	// Use player 0 for simplicity in ICE implementation
 	return CreateSession(0, SessionName, NewSessionSettings);
 }
 
@@ -351,6 +349,7 @@ bool FOnlineSessionICE::CancelMatchmaking(int32 SearchingPlayerNum, FName Sessio
 
 bool FOnlineSessionICE::CancelMatchmaking(const FUniqueNetId& SearchingPlayerId, FName SessionName)
 {
+	// Use player 0 for simplicity in ICE implementation
 	return CancelMatchmaking(0, SessionName);
 }
 
@@ -410,6 +409,7 @@ bool FOnlineSessionICE::FindSessions(int32 SearchingPlayerNum, const TSharedRef<
 
 bool FOnlineSessionICE::FindSessions(const FUniqueNetId& SearchingPlayerId, const TSharedRef<FOnlineSessionSearch>& SearchSettings)
 {
+	// Use player 0 for simplicity in ICE implementation
 	return FindSessions(0, SearchSettings);
 }
 
@@ -528,6 +528,7 @@ bool FOnlineSessionICE::JoinSession(int32 PlayerNum, FName SessionName, const FO
 
 bool FOnlineSessionICE::JoinSession(const FUniqueNetId& PlayerId, FName SessionName, const FOnlineSessionSearchResult& DesiredSession)
 {
+	// Use player 0 for simplicity in ICE implementation
 	return JoinSession(0, SessionName, DesiredSession);
 }
 
@@ -579,7 +580,7 @@ bool FOnlineSessionICE::FindFriendSession(int32 LocalUserNum, const FUniqueNetId
 
 bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const FUniqueNetId& Friend)
 {
-	// Delegate to the int32 version with default user num
+	// Use player 0 for simplicity in ICE implementation
 	return FindFriendSession(0, Friend);
 }
 
@@ -671,6 +672,7 @@ bool FOnlineSessionICE::SendSessionInviteToFriend(int32 LocalUserNum, FName Sess
 
 bool FOnlineSessionICE::SendSessionInviteToFriend(const FUniqueNetId& LocalUserId, FName SessionName, const FUniqueNetId& Friend)
 {
+	// Use player 0 for simplicity in ICE implementation
 	return SendSessionInviteToFriend(0, SessionName, Friend);
 }
 
@@ -710,6 +712,7 @@ bool FOnlineSessionICE::SendSessionInviteToFriends(int32 LocalUserNum, FName Ses
 
 bool FOnlineSessionICE::SendSessionInviteToFriends(const FUniqueNetId& LocalUserId, FName SessionName, const TArray<FUniqueNetIdRef>& Friends)
 {
+	// Use player 0 for simplicity in ICE implementation
 	return SendSessionInviteToFriends(0, SessionName, Friends);
 }
 
