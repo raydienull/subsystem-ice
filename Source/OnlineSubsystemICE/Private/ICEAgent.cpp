@@ -2283,10 +2283,11 @@ void FICEAgent::AppendTURNUsernameAttribute(TArray<uint8>& Buffer, int32& Offset
 	Buffer[Offset++] = (UsernameLen >> 8) & 0xFF;
 	Buffer[Offset++] = UsernameLen & 0xFF;
 	
-	// Add username string efficiently using FMemory::Memcpy
+	// Add username string (uses implicit TCHAR to uint8 conversion)
+	// Note: TURN credentials should be ASCII-compatible as per RFC 5766
 	for (int32 i = 0; i < UsernameLen; i++)
 	{
-		Buffer[Offset++] = (uint8)Username[i];
+		Buffer[Offset++] = Username[i];
 	}
 	
 	// Pad to 4-byte boundary
