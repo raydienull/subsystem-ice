@@ -476,6 +476,8 @@ bool FOnlineSessionICE::CancelFindSessions()
 
 bool FOnlineSessionICE::PingSearchResults(const FOnlineSessionSearchResult& SearchResult)
 {
+	// Ping functionality not implemented for ICE subsystem
+	// ICE connections are peer-to-peer and don't support traditional pinging
 	return false;
 }
 
