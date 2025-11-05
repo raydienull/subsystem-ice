@@ -18,6 +18,19 @@ namespace STUNConstants
 	constexpr uint8 ERROR_CLASS_MASK = 0x07;
 	constexpr int32 ERROR_CLASS_MULTIPLIER = 100;
 	constexpr int32 SHA1_BLOCK_SIZE = 64;
+	
+	// STUN Magic Cookie (RFC 5389)
+	constexpr uint32 MAGIC_COOKIE = 0x2112A442;
+	constexpr uint16 MAGIC_COOKIE_HIGH = 0x2112; // First 16 bits of magic cookie
+	
+	// TURN Channel number range (RFC 5766)
+	constexpr uint16 CHANNEL_NUMBER_MIN = 0x4000;
+	constexpr uint16 CHANNEL_NUMBER_MAX = 0x7FFF;
+	
+	// Packet format detection bits
+	constexpr uint8 PACKET_TYPE_MASK = 0xC0;
+	constexpr uint8 PACKET_TYPE_STUN = 0x00;      // STUN message: bits 00
+	constexpr uint8 PACKET_TYPE_CHANNEL_DATA = 0x40; // ChannelData: bits 01
 }
 
 // Handshake protocol constants
@@ -93,7 +106,7 @@ FICEAgent::FICEAgent(const FICEAgentConfig& InConfig)
 	, TURNSocket(nullptr)
 	, TURNAllocationLifetime(600)
 	, TimeSinceTURNRefresh(0.0f)
-	, TURNChannelNumber(0x4000)
+	, TURNChannelNumber(STUNConstants::CHANNEL_NUMBER_MIN)
 	, bTURNAllocationActive(false)
 	, bIsConnected(false)
 	, ConnectionState(EICEConnectionState::New)
@@ -369,12 +382,12 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 					{
 						// XOR-ed Port (2 bytes at offset 6-7)
 						uint16 XorPort = (STUNResponse[Offset + 6] << 8) | STUNResponse[Offset + 7];
-						OutPublicPort = XorPort ^ 0x2112;
+						OutPublicPort = XorPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
 
 						// XOR-ed IP (4 bytes at offset 8-11)
 						uint32 XorIP = (STUNResponse[Offset + 8] << 24) | (STUNResponse[Offset + 9] << 16) |
 						              (STUNResponse[Offset + 10] << 8) | STUNResponse[Offset + 11];
-						uint32 PublicIPValue = XorIP ^ 0x2112A442;
+						uint32 PublicIPValue = XorIP ^ STUNConstants::MAGIC_COOKIE;
 
 						// Convert to string
 						OutPublicIP = FString::Printf(TEXT("%d.%d.%d.%d"),
@@ -712,12 +725,12 @@ bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedP
 					{
 						// XOR-ed Port (2 bytes at offset 6-7)
 						uint16 XorPort = (TURNResponse[AttrOffset + 6] << 8) | TURNResponse[AttrOffset + 7];
-						OutRelayPort = XorPort ^ 0x2112;
+						OutRelayPort = XorPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
 
 						// XOR-ed IP (4 bytes at offset 8-11)
 						uint32 XorIP = (TURNResponse[AttrOffset + 8] << 24) | (TURNResponse[AttrOffset + 9] << 16) |
 						              (TURNResponse[AttrOffset + 10] << 8) | TURNResponse[AttrOffset + 11];
-						uint32 RelayIPValue = XorIP ^ 0x2112A442;
+						uint32 RelayIPValue = XorIP ^ STUNConstants::MAGIC_COOKIE;
 
 						// Convert to string
 						OutRelayIP = FString::Printf(TEXT("%d.%d.%d.%d"),
@@ -1669,7 +1682,7 @@ bool FICEAgent::PerformTURNCreatePermission(const FString& PeerAddress, int32 Pe
 	Request[Offset++] = 0x01; // IPv4
 
 	// XOR-ed Port
-	uint16 XorPort = PeerPort ^ 0x2112;
+	uint16 XorPort = PeerPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
 	Request[Offset++] = (XorPort >> 8) & 0xFF;
 	Request[Offset++] = XorPort & 0xFF;
 
@@ -1685,7 +1698,7 @@ bool FICEAgent::PerformTURNCreatePermission(const FString& PeerAddress, int32 Pe
 		              (FCString::Atoi(*IPParts[2]) << 8) |
 		              FCString::Atoi(*IPParts[3]);
 	}
-	uint32 XorIP = PeerIPValue ^ 0x2112A442;
+	uint32 XorIP = PeerIPValue ^ STUNConstants::MAGIC_COOKIE;
 	Request[Offset++] = (XorIP >> 24) & 0xFF;
 	Request[Offset++] = (XorIP >> 16) & 0xFF;
 	Request[Offset++] = (XorIP >> 8) & 0xFF;
@@ -1825,7 +1838,7 @@ bool FICEAgent::PerformTURNChannelBind(const FString& PeerAddress, int32 PeerPor
 	Request[Offset++] = 0x00;
 	Request[Offset++] = 0x01; // IPv4
 
-	uint16 XorPort = PeerPort ^ 0x2112;
+	uint16 XorPort = PeerPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
 	Request[Offset++] = (XorPort >> 8) & 0xFF;
 	Request[Offset++] = XorPort & 0xFF;
 
@@ -1840,7 +1853,7 @@ bool FICEAgent::PerformTURNChannelBind(const FString& PeerAddress, int32 PeerPor
 		              (FCString::Atoi(*IPParts[2]) << 8) |
 		              FCString::Atoi(*IPParts[3]);
 	}
-	uint32 XorIP = PeerIPValue ^ 0x2112A442;
+	uint32 XorIP = PeerIPValue ^ STUNConstants::MAGIC_COOKIE;
 	Request[Offset++] = (XorIP >> 24) & 0xFF;
 	Request[Offset++] = (XorIP >> 16) & 0xFF;
 	Request[Offset++] = (XorIP >> 8) & 0xFF;
@@ -2074,7 +2087,7 @@ bool FICEAgent::SendDataThroughTURN(const uint8* Data, int32 Size, const FString
 	}
 
 	// Use ChannelData if channel is bound (more efficient)
-	if (TURNChannelNumber >= 0x4000 && TURNChannelNumber <= 0x7FFF)
+	if (TURNChannelNumber >= STUNConstants::CHANNEL_NUMBER_MIN && TURNChannelNumber <= STUNConstants::CHANNEL_NUMBER_MAX)
 	{
 		// ChannelData format: Channel Number (2) | Length (2) | Application Data (variable)
 		TArray<uint8> ChannelData;
@@ -2137,7 +2150,7 @@ bool FICEAgent::ReceiveDataFromTURN(uint8* Data, int32 MaxSize, int32& OutSize)
 	}
 
 	// Check if this is ChannelData (first two bits are 01)
-	if ((ReceiveBuffer[0] & 0xC0) == 0x40)
+	if ((ReceiveBuffer[0] & STUNConstants::PACKET_TYPE_MASK) == STUNConstants::PACKET_TYPE_CHANNEL_DATA)
 	{
 		// ChannelData format
 		uint16 ChannelNumber = (ReceiveBuffer[0] << 8) | ReceiveBuffer[1];
@@ -2151,7 +2164,7 @@ bool FICEAgent::ReceiveDataFromTURN(uint8* Data, int32 MaxSize, int32& OutSize)
 		}
 	}
 	// Check if this is a STUN message (first two bits are 00)
-	else if ((ReceiveBuffer[0] & 0xC0) == 0x00)
+	else if ((ReceiveBuffer[0] & STUNConstants::PACKET_TYPE_MASK) == STUNConstants::PACKET_TYPE_STUN)
 	{
 		// This could be a Data indication (0x0017)
 		uint16 MessageType = (ReceiveBuffer[0] << 8) | ReceiveBuffer[1];
