@@ -47,9 +47,16 @@ FICECandidate FICECandidate::FromString(const FString& CandidateString)
 {
 	FICECandidate Candidate;
 	
+	// Strip "candidate:" prefix if present
+	FString ParseString = CandidateString;
+	if (ParseString.StartsWith(TEXT("candidate:")))
+	{
+		ParseString = ParseString.RightChop(10); // Remove "candidate:" (10 characters)
+	}
+	
 	// Parse ICE candidate string (simplified parser)
 	TArray<FString> Parts;
-	CandidateString.ParseIntoArray(Parts, TEXT(" "));
+	ParseString.ParseIntoArray(Parts, TEXT(" "));
 	
 	if (Parts.Num() >= 8)
 	{
@@ -958,11 +965,66 @@ bool FICEAgent::StartConnectivityChecks()
 	}
 	RemoteAddr->SetPort(SelectedRemoteCandidate.Port);
 
+	// Parse local candidate address for binding
+	TSharedPtr<FInternetAddr> LocalAddr = SocketSubsystem->GetAddressFromString(SelectedLocalCandidate.Address);
+	if (!LocalAddr.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to parse local address: %s"), *SelectedLocalCandidate.Address);
+		return false;
+	}
+	
+	// For server reflexive and relay candidates, we need to bind to the local interface (0.0.0.0)
+	// and let the OS assign a port, as we can't bind directly to the public/relay address
+	if (SelectedLocalCandidate.Type == EICECandidateType::ServerReflexive || 
+	    SelectedLocalCandidate.Type == EICECandidateType::Relayed)
+	{
+		// Bind to any address (0.0.0.0) and let OS assign port
+		LocalAddr->SetAnyAddress();
+		LocalAddr->SetPort(0); // OS will assign an ephemeral port
+	}
+	else
+	{
+		// For host candidates, we can bind to the specific local address
+		LocalAddr->SetPort(SelectedLocalCandidate.Port);
+	}
+
 	Socket = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("ICE"), RemoteAddr->GetProtocolType());
 	if (!Socket)
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to create ICE socket"));
 		return false;
+	}
+
+	// Bind socket to local address
+	if (!Socket->Bind(*LocalAddr))
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Failed to bind socket to local address: %s:%d"), 
+			*LocalAddr->ToString(false), LocalAddr->GetPort());
+		SocketSubsystem->DestroySocket(Socket);
+		Socket = nullptr;
+		return false;
+	}
+
+	// Set socket to non-blocking mode for async operations
+	Socket->SetNonBlocking(true);
+	
+	// Enable broadcast and reuse address options
+	Socket->SetReuseAddr(true);
+	Socket->SetRecvErr(false);
+
+	// Get the actual bound port
+	TSharedRef<FInternetAddr> BoundAddr = SocketSubsystem->CreateInternetAddr();
+	if (Socket->GetAddress(*BoundAddr))
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Socket bound to %s:%d"), 
+			*BoundAddr->ToString(false), BoundAddr->GetPort());
+		
+		// Update local candidate port if it was 0 (OS assigned)
+		if (SelectedLocalCandidate.Port == 0)
+		{
+			SelectedLocalCandidate.Port = BoundAddr->GetPort();
+			UE_LOG(LogOnlineICE, Log, TEXT("Updated local candidate port to %d"), SelectedLocalCandidate.Port);
+		}
 	}
 
 	// Start handshake to verify bidirectional connection
