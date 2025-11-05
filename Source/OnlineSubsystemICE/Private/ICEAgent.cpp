@@ -159,7 +159,9 @@ void FICEAgent::GatherHostCandidates()
 	HostCandidate.Transport = TEXT("UDP");
 	HostCandidate.Priority = CalculatePriority(EICECandidateType::Host, 65535, 1);
 	HostCandidate.Address = LocalAddr->ToString(false);
-	HostCandidate.Port = 0; // Will be assigned when socket is created
+	// Port will be assigned when socket is created during connectivity checks
+	// We use 0 to indicate "any available port"
+	HostCandidate.Port = 0;
 	HostCandidate.Type = EICECandidateType::Host;
 
 	LocalCandidates.Add(HostCandidate);
@@ -1016,14 +1018,29 @@ bool FICEAgent::StartConnectivityChecks()
 	TSharedRef<FInternetAddr> BoundAddr = SocketSubsystem->CreateInternetAddr();
 	if (Socket->GetAddress(*BoundAddr))
 	{
+		int32 ActualPort = BoundAddr->GetPort();
 		UE_LOG(LogOnlineICE, Log, TEXT("Socket bound to %s:%d"), 
-			*BoundAddr->ToString(false), BoundAddr->GetPort());
+			*BoundAddr->ToString(false), ActualPort);
 		
 		// Update local candidate port if it was 0 (OS assigned)
 		if (SelectedLocalCandidate.Port == 0)
 		{
-			SelectedLocalCandidate.Port = BoundAddr->GetPort();
-			UE_LOG(LogOnlineICE, Log, TEXT("Updated local candidate port to %d"), SelectedLocalCandidate.Port);
+			SelectedLocalCandidate.Port = ActualPort;
+			
+			// Also update the port in the LocalCandidates array for future use
+			for (FICECandidate& Candidate : LocalCandidates)
+			{
+				if (Candidate.Address == SelectedLocalCandidate.Address && 
+				    Candidate.Type == SelectedLocalCandidate.Type &&
+				    Candidate.Port == 0)
+				{
+					Candidate.Port = ActualPort;
+					UE_LOG(LogOnlineICE, Log, TEXT("Updated local candidate port to %d in candidates list"), ActualPort);
+					break;
+				}
+			}
+			
+			UE_LOG(LogOnlineICE, Log, TEXT("Updated selected local candidate port to %d"), ActualPort);
 		}
 	}
 
