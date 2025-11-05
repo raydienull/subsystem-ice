@@ -65,6 +65,15 @@ struct FICECandidate
 
 	FString ToString() const;
 	static FICECandidate FromString(const FString& CandidateString);
+	
+	/**
+	 * Check if this candidate is valid (has non-empty address and valid port)
+	 * @return True if the candidate has a valid address and port in range [1, 65535]
+	 */
+	bool IsValid() const
+	{
+		return !Address.IsEmpty() && Port > 0 && Port <= 65535;
+	}
 };
 
 /**
@@ -412,4 +421,28 @@ private:
 
 	/** Helper function to calculate HMAC-SHA1 for MESSAGE-INTEGRITY */
 	void CalculateHMACSHA1(const uint8* Data, int32 DataLen, const uint8* Key, int32 KeyLen, uint8* OutHash);
+
+	/**
+	 * Helper function to append USERNAME attribute to TURN request buffer
+	 * @param Buffer - Buffer to write to
+	 * @param Offset - Current offset in buffer, will be updated
+	 * @param Username - Username to add
+	 */
+	void AppendTURNUsernameAttribute(TArray<uint8>& Buffer, int32& Offset, const FString& Username);
+
+	/**
+	 * Helper function to filter candidates by type
+	 * @param Candidates - Source array of candidates
+	 * @param Type - Type of candidate to filter for
+	 * @return Filtered array of candidates matching the type
+	 */
+	TArray<FICECandidate> FilterCandidatesByType(const TArray<FICECandidate>& Candidates, EICECandidateType Type) const;
+
+	/**
+	 * Helper function to filter candidates by multiple types (more efficient for multiple types)
+	 * @param Candidates - Source array of candidates
+	 * @param Types - Array of types to filter for
+	 * @return Filtered array of candidates matching any of the types
+	 */
+	TArray<FICECandidate> FilterCandidatesByTypes(const TArray<FICECandidate>& Candidates, const TArray<EICECandidateType>& Types) const;
 };

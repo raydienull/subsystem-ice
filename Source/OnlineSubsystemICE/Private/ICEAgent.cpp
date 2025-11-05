@@ -871,38 +871,27 @@ bool FICEAgent::StartConnectivityChecks()
 	TimeSinceHandshakeStart = 0.0f;
 	TimeSinceLastHandshakeSend = 0.0f;
 
-	// Intentar primero con candidatos directos (host y server reflexive)
+	// Select candidates based on strategy (direct or relay)
+	bool bUsingRelay = false;
+	
+	// Try direct candidates first (host and server reflexive)
 	if (DirectConnectionAttempts < MAX_DIRECT_ATTEMPTS)
 	{
-		UpdateConnectionState(EICEConnectionState::ConnectingDirect);
 		DirectConnectionAttempts++;
 
-		// Seleccionar candidatos priorizando host y server reflexive
-		TArray<FICECandidate> DirectLocalCandidates;
-		TArray<FICECandidate> DirectRemoteCandidates;
+		// Filter direct candidates (host and server reflexive) in a single pass
+		// Note: Both types are direct connections
+		TArray<EICECandidateType> DirectTypes = { EICECandidateType::Host, EICECandidateType::ServerReflexive };
+		TArray<FICECandidate> DirectLocalCandidates = FilterCandidatesByTypes(LocalCandidates, DirectTypes);
+		TArray<FICECandidate> DirectRemoteCandidates = FilterCandidatesByTypes(RemoteCandidates, DirectTypes);
 
-		for (const FICECandidate& Cand : LocalCandidates)
-		{
-			if (Cand.Type == EICECandidateType::Host || Cand.Type == EICECandidateType::ServerReflexive)
-			{
-				DirectLocalCandidates.Add(Cand);
-			}
-		}
-
-		for (const FICECandidate& Cand : RemoteCandidates)
-		{
-			if (Cand.Type == EICECandidateType::Host || Cand.Type == EICECandidateType::ServerReflexive)
-			{
-				DirectRemoteCandidates.Add(Cand);
-			}
-		}
-
+		// If direct candidates are available, select them
 		if (DirectLocalCandidates.Num() > 0 && DirectRemoteCandidates.Num() > 0)
 		{
-			// Seleccionar candidatos de mayor prioridad
 			SelectedLocalCandidate = SelectHighestPriorityCandidate(DirectLocalCandidates);
 			SelectedRemoteCandidate = SelectHighestPriorityCandidate(DirectRemoteCandidates);
 
+			UpdateConnectionState(EICEConnectionState::ConnectingDirect);
 			UE_LOG(LogOnlineICE, Log, TEXT("Attempting direct connection (try %d/%d) - Local: %s (priority: %d), Remote: %s (priority: %d)"),
 				DirectConnectionAttempts, MAX_DIRECT_ATTEMPTS,
 				*SelectedLocalCandidate.ToString(), SelectedLocalCandidate.Priority,
@@ -910,54 +899,55 @@ bool FICEAgent::StartConnectivityChecks()
 		}
 		else
 		{
-			UE_LOG(LogOnlineICE, Warning, TEXT("No direct candidates available (Local: %d, Remote: %d), falling back to relay"),
+			UE_LOG(LogOnlineICE, Warning, TEXT("No direct candidates available (Local: %d, Remote: %d), skipping to relay"),
 				DirectLocalCandidates.Num(), DirectRemoteCandidates.Num());
-			UpdateConnectionState(EICEConnectionState::ConnectingRelay);
+			// Mark for immediate relay usage
+			DirectConnectionAttempts = MAX_DIRECT_ATTEMPTS;
+			bUsingRelay = true;
 		}
 	}
 	else
 	{
-		// Si los intentos directos fallaron, intentar con candidatos relay
-		UpdateConnectionState(EICEConnectionState::ConnectingRelay);
-		UE_LOG(LogOnlineICE, Log, TEXT("Direct connection attempts failed, trying relay candidates"));
+		// Direct connection attempts exhausted, use relay
+		bUsingRelay = true;
+	}
 
-		// Seleccionar candidatos relay
-		TArray<FICECandidate> RelayLocalCandidates;
-		TArray<FICECandidate> RelayRemoteCandidates;
+	// If we need to use relay, select relay candidates
+	if (bUsingRelay)
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Direct connection attempts exhausted or unavailable, trying relay candidates"));
 
-		for (const FICECandidate& Cand : LocalCandidates)
-		{
-			if (Cand.Type == EICECandidateType::Relayed)
-			{
-				RelayLocalCandidates.Add(Cand);
-			}
-		}
+		// Filter relay candidates using the helper
+		TArray<FICECandidate> RelayLocalCandidates = FilterCandidatesByType(LocalCandidates, EICECandidateType::Relayed);
+		TArray<FICECandidate> RelayRemoteCandidates = FilterCandidatesByType(RemoteCandidates, EICECandidateType::Relayed);
 
-		for (const FICECandidate& Cand : RemoteCandidates)
-		{
-			if (Cand.Type == EICECandidateType::Relayed)
-			{
-				RelayRemoteCandidates.Add(Cand);
-			}
-		}
-
+		// Check if relay candidates are available
 		if (RelayLocalCandidates.Num() > 0 && RelayRemoteCandidates.Num() > 0)
 		{
-			// Seleccionar candidatos relay de mayor prioridad
 			SelectedLocalCandidate = SelectHighestPriorityCandidate(RelayLocalCandidates);
 			SelectedRemoteCandidate = SelectHighestPriorityCandidate(RelayRemoteCandidates);
 
+			UpdateConnectionState(EICEConnectionState::ConnectingRelay);
 			UE_LOG(LogOnlineICE, Log, TEXT("Selected relay candidates - Local: %s (priority: %d), Remote: %s (priority: %d)"),
 				*SelectedLocalCandidate.ToString(), SelectedLocalCandidate.Priority,
 				*SelectedRemoteCandidate.ToString(), SelectedRemoteCandidate.Priority);
 		}
 		else
 		{
-			UE_LOG(LogOnlineICE, Error, TEXT("No relay candidates available after direct connection failed (Local relay: %d, Remote relay: %d)"),
+			UE_LOG(LogOnlineICE, Error, TEXT("No relay candidates available (Local relay: %d, Remote relay: %d)"),
 				RelayLocalCandidates.Num(), RelayRemoteCandidates.Num());
 			UpdateConnectionState(EICEConnectionState::Failed);
 			return false;
 		}
+	}
+
+	// Validate that we have valid selected candidates before continuing
+	if (!SelectedLocalCandidate.IsValid() || !SelectedRemoteCandidate.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Selected candidates are invalid - Local: %s, Remote: %s"),
+			*SelectedLocalCandidate.ToString(), *SelectedRemoteCandidate.ToString());
+		UpdateConnectionState(EICEConnectionState::Failed);
+		return false;
 	}
 
 	// Create socket for communication
@@ -1298,6 +1288,13 @@ bool FICEAgent::SendHandshake()
 		return false;
 	}
 
+	// Validate that we have a valid remote candidate
+	if (!SelectedRemoteCandidate.IsValid())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Cannot send handshake: selected remote candidate is invalid"));
+		return false;
+	}
+
 	// Create simple handshake packet
 	// Format: [Magic Number (4 bytes)] [Type (1 byte)] [Timestamp (4 bytes)]
 	uint8 HandshakePacket[HandshakeConstants::HANDSHAKE_PACKET_SIZE];
@@ -1321,7 +1318,7 @@ bool FICEAgent::SendHandshake()
 	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->GetAddressFromString(SelectedRemoteCandidate.Address);
 	if (!RemoteAddr.IsValid())
 	{
-		UE_LOG(LogOnlineICE, Error, TEXT("Cannot send handshake: invalid remote address"));
+		UE_LOG(LogOnlineICE, Error, TEXT("Cannot send handshake: failed to parse remote address '%s'"), *SelectedRemoteCandidate.Address);
 		return false;
 	}
 	RemoteAddr->SetPort(SelectedRemoteCandidate.Port);
@@ -1805,20 +1802,8 @@ bool FICEAgent::PerformTURNCreatePermission(const FString& PeerAddress, int32 Pe
 	Request[Offset++] = (XorIP >> 8) & 0xFF;
 	Request[Offset++] = XorIP & 0xFF;
 
-	// Add USERNAME attribute (required for authenticated requests)
-	int32 UsernameLen = Config.TURNUsername.Len();
-	Request[Offset++] = 0x00;
-	Request[Offset++] = 0x06;
-	Request[Offset++] = (UsernameLen >> 8) & 0xFF;
-	Request[Offset++] = UsernameLen & 0xFF;
-	for (int32 i = 0; i < UsernameLen; i++)
-	{
-		Request[Offset++] = Config.TURNUsername[i];
-	}
-	while (Offset % 4 != 0)
-	{
-		Request[Offset++] = 0x00;
-	}
+	// Add USERNAME attribute using helper
+	AppendTURNUsernameAttribute(Request, Offset, Config.TURNUsername);
 
 	// Set message length
 	int32 MessageLength = Offset - 20;
@@ -1960,20 +1945,8 @@ bool FICEAgent::PerformTURNChannelBind(const FString& PeerAddress, int32 PeerPor
 	Request[Offset++] = (XorIP >> 8) & 0xFF;
 	Request[Offset++] = XorIP & 0xFF;
 
-	// Add USERNAME attribute
-	int32 UsernameLen = Config.TURNUsername.Len();
-	Request[Offset++] = 0x00;
-	Request[Offset++] = 0x06;
-	Request[Offset++] = (UsernameLen >> 8) & 0xFF;
-	Request[Offset++] = UsernameLen & 0xFF;
-	for (int32 i = 0; i < UsernameLen; i++)
-	{
-		Request[Offset++] = Config.TURNUsername[i];
-	}
-	while (Offset % 4 != 0)
-	{
-		Request[Offset++] = 0x00;
-	}
+	// Add USERNAME attribute using helper
+	AppendTURNUsernameAttribute(Request, Offset, Config.TURNUsername);
 
 	// Set message length
 	int32 MessageLength = Offset - 20;
@@ -2078,20 +2051,8 @@ bool FICEAgent::PerformTURNRefresh()
 	Request[Offset++] = (TURNAllocationLifetime >> 8) & 0xFF;
 	Request[Offset++] = TURNAllocationLifetime & 0xFF;
 
-	// Add USERNAME attribute
-	int32 UsernameLen = Config.TURNUsername.Len();
-	Request[Offset++] = 0x00;
-	Request[Offset++] = 0x06;
-	Request[Offset++] = (UsernameLen >> 8) & 0xFF;
-	Request[Offset++] = UsernameLen & 0xFF;
-	for (int32 i = 0; i < UsernameLen; i++)
-	{
-		Request[Offset++] = Config.TURNUsername[i];
-	}
-	while (Offset % 4 != 0)
-	{
-		Request[Offset++] = 0x00;
-	}
+	// Add USERNAME attribute using helper
+	AppendTURNUsernameAttribute(Request, Offset, Config.TURNUsername);
 
 	// Set message length
 	int32 MessageLength = Offset - 20;
@@ -2297,4 +2258,71 @@ bool FICEAgent::ReceiveDataFromTURN(uint8* Data, int32 MaxSize, int32& OutSize)
 
 	OutSize = 0;
 	return false;
+}
+
+void FICEAgent::AppendTURNUsernameAttribute(TArray<uint8>& Buffer, int32& Offset, const FString& Username)
+{
+	// Add USERNAME attribute (0x0006)
+	int32 UsernameLen = Username.Len();
+	
+	// Calculate required space: 4 bytes header + username + padding to 4-byte boundary
+	int32 PaddingBytes = (4 - (UsernameLen % 4)) % 4;
+	int32 RequiredSpace = 4 + UsernameLen + PaddingBytes;
+	
+	// Ensure buffer has enough space
+	if (Offset + RequiredSpace > Buffer.Num())
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Buffer too small for USERNAME attribute (needs %d bytes, has %d)"), 
+			Offset + RequiredSpace, Buffer.Num());
+		return;
+	}
+	
+	// Write attribute header
+	Buffer[Offset++] = 0x00;
+	Buffer[Offset++] = 0x06;
+	Buffer[Offset++] = (UsernameLen >> 8) & 0xFF;
+	Buffer[Offset++] = UsernameLen & 0xFF;
+	
+	// Add username string (uses implicit TCHAR to uint8 conversion)
+	// Note: TURN credentials should be ASCII-compatible as per RFC 5766
+	for (int32 i = 0; i < UsernameLen; i++)
+	{
+		Buffer[Offset++] = Username[i];
+	}
+	
+	// Pad to 4-byte boundary
+	for (int32 i = 0; i < PaddingBytes; i++)
+	{
+		Buffer[Offset++] = 0x00;
+	}
+}
+
+TArray<FICECandidate> FICEAgent::FilterCandidatesByType(const TArray<FICECandidate>& Candidates, EICECandidateType Type) const
+{
+	TArray<FICECandidate> Filtered;
+	for (const FICECandidate& Candidate : Candidates)
+	{
+		if (Candidate.Type == Type)
+		{
+			Filtered.Add(Candidate);
+		}
+	}
+	return Filtered;
+}
+
+TArray<FICECandidate> FICEAgent::FilterCandidatesByTypes(const TArray<FICECandidate>& Candidates, const TArray<EICECandidateType>& Types) const
+{
+	TArray<FICECandidate> Filtered;
+	for (const FICECandidate& Candidate : Candidates)
+	{
+		for (const EICECandidateType& Type : Types)
+		{
+			if (Candidate.Type == Type)
+			{
+				Filtered.Add(Candidate);
+				break; // No need to check other types once we found a match
+			}
+		}
+	}
+	return Filtered;
 }
