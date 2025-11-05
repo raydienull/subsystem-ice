@@ -175,7 +175,7 @@ void FOnlineSubsystemICEModule::StartupModule()
 												
 												// Open listen server
 												UWorld* World = FindGameWorld();
-												if (World && GEngine)
+												if (World)
 												{
 													FString TravelURL;
 													if (!MapName.IsEmpty())
@@ -193,7 +193,7 @@ void FOnlineSubsystemICEModule::StartupModule()
 													TravelURL += TEXT("?listen");
 													
 													UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Opening listen server with URL: %s"), *TravelURL);
-													GEngine->Browse(*World->GetWorldContext(), FURL(*TravelURL), nullptr);
+													World->ServerTravel(TravelURL, false);
 												}
 												else
 												{
