@@ -118,6 +118,13 @@ public:
 	 */
 	FOnRemoteCandidateReceived OnRemoteCandidateReceived;
 
+	/**
+	 * Delegate called when ICE connection state changes for a session
+	 * Params: SessionName, NewState
+	 */
+	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnICEConnectionStateChanged, FName, EICEConnectionState);
+	FOnICEConnectionStateChanged OnICEConnectionStateChanged;
+
 private:
 	/** Reference to the main subsystem */
 	FOnlineSubsystemICE* Subsystem;

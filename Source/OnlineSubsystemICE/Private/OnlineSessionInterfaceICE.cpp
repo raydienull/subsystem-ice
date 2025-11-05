@@ -57,6 +57,20 @@ FOnlineSessionICE::FOnlineSessionICE(FOnlineSubsystemICE* InSubsystem)
 	
 	ICEAgent = MakeShared<FICEAgent>(Config);
 	
+	// Bind to ICE agent's connection state changes to forward them with session context
+	// We need to capture 'this' to access session information, but we must be careful about lifetime
+	// The ICEAgent is owned by this object, so it's safe
+	ICEAgent->OnConnectionStateChanged.AddLambda([this](EICEConnectionState NewState)
+	{
+		// Find which session this connection state change is for
+		// For simplicity, we'll broadcast for all sessions since we typically have one active session at a time
+		// In a more complex scenario, you'd track which session is using which connection
+		for (const auto& SessionPair : Sessions)
+		{
+			OnICEConnectionStateChanged.Broadcast(SessionPair.Key, NewState);
+		}
+	});
+	
 	UE_LOG(LogOnlineICE, Log, TEXT("OnlineSessionICE initialized"));
 }
 
