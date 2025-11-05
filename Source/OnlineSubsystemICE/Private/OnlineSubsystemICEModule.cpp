@@ -38,6 +38,43 @@ namespace
 		}
 		return nullptr;
 	}
+
+	/**
+	 * Helper function to create default session settings for ICE
+	 * @return Session settings with default values
+	 */
+	FOnlineSessionSettings CreateDefaultSessionSettings()
+	{
+		FOnlineSessionSettings SessionSettings;
+		SessionSettings.NumPublicConnections = ICE_DEFAULT_MAX_PLAYERS;
+		SessionSettings.bShouldAdvertise = true;
+		SessionSettings.bAllowJoinInProgress = true;
+		SessionSettings.bIsLANMatch = false;
+		SessionSettings.bUsesPresence = true;
+		SessionSettings.bAllowInvites = true;
+		return SessionSettings;
+	}
+
+	/**
+	 * Helper function to get the ICE session interface
+	 * @return Pointer to the ICE session interface, or nullptr if not available
+	 */
+	FOnlineSessionICE* GetICESessionInterface()
+	{
+		IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+		if (OnlineSub)
+		{
+			IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+			if (Sessions.IsValid())
+			{
+				// Safe cast: ICE subsystem always creates FOnlineSessionICE instances in FOnlineSubsystemICE::Init()
+				FOnlineSessionICE* ICESession = static_cast<FOnlineSessionICE*>(Sessions.Get());
+				check(ICESession); // Verify assumption in development builds
+				return ICESession;
+			}
+		}
+		return nullptr;
+	}
 }
 
 /**
@@ -132,13 +169,7 @@ void FOnlineSubsystemICEModule::StartupModule()
 					}
 					
 					// Create session settings
-					FOnlineSessionSettings SessionSettings;
-					SessionSettings.NumPublicConnections = ICE_DEFAULT_MAX_PLAYERS;
-					SessionSettings.bShouldAdvertise = true;
-					SessionSettings.bAllowJoinInProgress = true;
-					SessionSettings.bIsLANMatch = false;
-					SessionSettings.bUsesPresence = true;
-					SessionSettings.bAllowInvites = true;
+					FOnlineSessionSettings SessionSettings = CreateDefaultSessionSettings();
 					
 					// Bind to completion delegate with self-cleanup
 					// Note: Capturing SessionName and MapName by value to ensure they outlive the async callback
@@ -306,12 +337,7 @@ void FOnlineSubsystemICEModule::StartupModule()
 					// Create a mock search result for joining
 					// In a real scenario, this would come from FindSessions
 					FOnlineSessionSearchResult SearchResult;
-					SearchResult.Session.SessionSettings.NumPublicConnections = ICE_DEFAULT_MAX_PLAYERS;
-					SearchResult.Session.SessionSettings.bShouldAdvertise = true;
-					SearchResult.Session.SessionSettings.bAllowJoinInProgress = true;
-					SearchResult.Session.SessionSettings.bIsLANMatch = false;
-					SearchResult.Session.SessionSettings.bUsesPresence = true;
-					SearchResult.Session.SessionSettings.bAllowInvites = true;
+					SearchResult.Session.SessionSettings = CreateDefaultSessionSettings();
 					
 					// Bind to completion delegate with self-cleanup
 					// Note: Capturing SessionName by value to ensure it outlives the async callback

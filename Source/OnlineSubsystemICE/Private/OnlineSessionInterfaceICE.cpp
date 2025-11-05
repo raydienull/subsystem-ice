@@ -74,10 +74,7 @@ FOnlineSessionICE::FOnlineSessionICE(FOnlineSubsystemICE* InSubsystem)
 	UE_LOG(LogOnlineICE, Log, TEXT("OnlineSessionICE initialized"));
 }
 
-FOnlineSessionICE::~FOnlineSessionICE()
-{
-	// Cleanup
-}
+FOnlineSessionICE::~FOnlineSessionICE() = default;
 
 bool FOnlineSessionICE::CreateSession(int32 HostingPlayerNum, FName SessionName, const FOnlineSessionSettings& NewSessionSettings)
 {
@@ -136,6 +133,8 @@ bool FOnlineSessionICE::CreateSession(int32 HostingPlayerNum, FName SessionName,
 
 bool FOnlineSessionICE::CreateSession(const FUniqueNetId& HostingPlayerId, FName SessionName, const FOnlineSessionSettings& NewSessionSettings)
 {
+	// ICE subsystem uses player 0 as default for simplified P2P implementation
+	// The HostingPlayerId parameter is preserved for interface compatibility
 	return CreateSession(0, SessionName, NewSessionSettings);
 }
 
@@ -351,6 +350,7 @@ bool FOnlineSessionICE::CancelMatchmaking(int32 SearchingPlayerNum, FName Sessio
 
 bool FOnlineSessionICE::CancelMatchmaking(const FUniqueNetId& SearchingPlayerId, FName SessionName)
 {
+	// ICE subsystem uses player 0 as default for simplified P2P implementation
 	return CancelMatchmaking(0, SessionName);
 }
 
@@ -410,6 +410,7 @@ bool FOnlineSessionICE::FindSessions(int32 SearchingPlayerNum, const TSharedRef<
 
 bool FOnlineSessionICE::FindSessions(const FUniqueNetId& SearchingPlayerId, const TSharedRef<FOnlineSessionSearch>& SearchSettings)
 {
+	// ICE subsystem uses player 0 as default for simplified P2P implementation
 	return FindSessions(0, SearchSettings);
 }
 
@@ -476,6 +477,10 @@ bool FOnlineSessionICE::CancelFindSessions()
 
 bool FOnlineSessionICE::PingSearchResults(const FOnlineSessionSearchResult& SearchResult)
 {
+	// Ping functionality not implemented for ICE subsystem
+	// ICE connections are peer-to-peer and don't support traditional server pinging
+	// For P2P connection quality, use ICE connectivity checks and monitor the connection state
+	// via OnICEConnectionStateChanged delegate instead
 	return false;
 }
 
@@ -528,6 +533,7 @@ bool FOnlineSessionICE::JoinSession(int32 PlayerNum, FName SessionName, const FO
 
 bool FOnlineSessionICE::JoinSession(const FUniqueNetId& PlayerId, FName SessionName, const FOnlineSessionSearchResult& DesiredSession)
 {
+	// ICE subsystem uses player 0 as default for simplified P2P implementation
 	return JoinSession(0, SessionName, DesiredSession);
 }
 
@@ -579,7 +585,8 @@ bool FOnlineSessionICE::FindFriendSession(int32 LocalUserNum, const FUniqueNetId
 
 bool FOnlineSessionICE::FindFriendSession(const FUniqueNetId& LocalUserId, const FUniqueNetId& Friend)
 {
-	// Delegate to the int32 version with default user num
+	// ICE subsystem uses player 0 as default for simplified P2P implementation
+	// The LocalUserId parameter is preserved for interface compatibility
 	return FindFriendSession(0, Friend);
 }
 
@@ -671,6 +678,7 @@ bool FOnlineSessionICE::SendSessionInviteToFriend(int32 LocalUserNum, FName Sess
 
 bool FOnlineSessionICE::SendSessionInviteToFriend(const FUniqueNetId& LocalUserId, FName SessionName, const FUniqueNetId& Friend)
 {
+	// ICE subsystem uses player 0 as default for simplified P2P implementation
 	return SendSessionInviteToFriend(0, SessionName, Friend);
 }
 
@@ -710,6 +718,7 @@ bool FOnlineSessionICE::SendSessionInviteToFriends(int32 LocalUserNum, FName Ses
 
 bool FOnlineSessionICE::SendSessionInviteToFriends(const FUniqueNetId& LocalUserId, FName SessionName, const TArray<FUniqueNetIdRef>& Friends)
 {
+	// ICE subsystem uses player 0 as default for simplified P2P implementation
 	return SendSessionInviteToFriends(0, SessionName, Friends);
 }
 

@@ -59,9 +59,7 @@ FOnlineIdentityICE::FOnlineIdentityICE(FOnlineSubsystemICE* InSubsystem)
 {
 }
 
-FOnlineIdentityICE::~FOnlineIdentityICE()
-{
-}
+FOnlineIdentityICE::~FOnlineIdentityICE() = default;
 
 bool FOnlineIdentityICE::Login(int32 LocalUserNum, const FOnlineAccountCredentials& AccountCredentials)
 {

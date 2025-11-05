@@ -9,7 +9,6 @@
 
 class FOnlineSessionICE;
 class FOnlineIdentityICE;
-class FSocketSubsystemICE;
 
 typedef TSharedPtr<FOnlineIdentityICE, ESPMode::ThreadSafe> FOnlineIdentityICEPtr;
 typedef TSharedPtr<FOnlineSessionICE, ESPMode::ThreadSafe> FOnlineSessionICEPtr;
