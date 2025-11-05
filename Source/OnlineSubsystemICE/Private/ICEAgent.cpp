@@ -1019,7 +1019,8 @@ bool FICEAgent::StartConnectivityChecks()
 
 	// Get the actual bound port
 	TSharedRef<FInternetAddr> BoundAddr = SocketSubsystem->CreateInternetAddr();
-	if (Socket->GetAddress(*BoundAddr))
+	Socket->GetAddress(*BoundAddr);
+	if (BoundAddr->IsValid())
 	{
 		int32 ActualPort = BoundAddr->GetPort();
 		UE_LOG(LogOnlineICE, Log, TEXT("Socket bound to %s:%d"), 
