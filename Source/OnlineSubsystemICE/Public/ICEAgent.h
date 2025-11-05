@@ -244,8 +244,14 @@ private:
 	/** Number of direct connection attempts made */
 	int32 DirectConnectionAttempts;
 
+	/** Total number of connection attempts (direct + relay) */
+	int32 TotalConnectionAttempts;
+
 	/** Maximum number of direct connection attempts before falling back to TURN */
 	static constexpr int32 MAX_DIRECT_ATTEMPTS = 3;
+
+	/** Maximum total connection attempts before giving up */
+	static constexpr int32 MAX_TOTAL_ATTEMPTS = 10;
 
 	/** Delay between connection attempts (seconds) */
 	float RetryDelay;
@@ -293,6 +299,75 @@ private:
 	 * Called when both send and receive handshake have completed
 	 */
 	void CompleteHandshake();
+
+	/**
+	 * Clean up the socket and update state to Failed
+	 * Helper method to reduce code duplication in error paths
+	 */
+	void CleanupSocketOnError();
+
+	/**
+	 * Select the candidate with the highest priority from an array
+	 * @param Candidates - Array of candidates to search
+	 * @return The candidate with the highest priority, or default if array is empty
+	 */
+	FICECandidate SelectHighestPriorityCandidate(const TArray<FICECandidate>& Candidates) const;
+
+	/**
+	 * Handle Tick logic for direct connection state
+	 * @param DeltaTime - Time elapsed since last tick
+	 */
+	void TickConnectingDirect(float DeltaTime);
+
+	/**
+	 * Handle Tick logic for relay connection state
+	 * @param DeltaTime - Time elapsed since last tick
+	 */
+	void TickConnectingRelay(float DeltaTime);
+
+	/**
+	 * Handle Tick logic for handshake state
+	 * @param DeltaTime - Time elapsed since last tick
+	 */
+	void TickPerformingHandshake(float DeltaTime);
+
+	/**
+	 * Validate socket subsystem is available
+	 * @return True if socket subsystem is valid, false otherwise
+	 */
+	bool ValidateSocketSubsystem() const;
+
+	/**
+	 * Verify handshake packet magic number
+	 * @param Buffer - Buffer containing packet data
+	 * @return True if magic number is valid
+	 */
+	bool VerifyHandshakeMagicNumber(const uint8* Buffer) const;
+
+	/**
+	 * Parse server address into host and port
+	 * @param ServerAddress - Server address string (host:port or just host)
+	 * @param OutHost - Parsed host name
+	 * @param OutPort - Parsed port (or default if not specified)
+	 * @param DefaultPort - Default port to use if not in address
+	 */
+	void ParseServerAddress(const FString& ServerAddress, FString& OutHost, int32& OutPort, int32 DefaultPort = 3478) const;
+
+	/**
+	 * Build a STUN binding request message
+	 * @param OutBuffer - Buffer to fill with STUN request (must be at least 20 bytes)
+	 */
+	void BuildSTUNBindingRequest(uint8* OutBuffer) const;
+
+	/**
+	 * Parse STUN response to extract XOR-MAPPED-ADDRESS
+	 * @param Response - Response buffer
+	 * @param ResponseSize - Size of response
+	 * @param OutPublicIP - Extracted public IP
+	 * @param OutPublicPort - Extracted public port
+	 * @return True if successfully parsed
+	 */
+	bool ParseSTUNResponse(const uint8* Response, int32 ResponseSize, FString& OutPublicIP, int32& OutPublicPort) const;
 
 	/** Gather host candidates (local network interfaces) */
 	void GatherHostCandidates();

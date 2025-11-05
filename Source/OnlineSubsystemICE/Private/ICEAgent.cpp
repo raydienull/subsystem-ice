@@ -111,6 +111,7 @@ FICEAgent::FICEAgent(const FICEAgentConfig& InConfig)
 	, bIsConnected(false)
 	, ConnectionState(EICEConnectionState::New)
 	, DirectConnectionAttempts(0)
+	, TotalConnectionAttempts(0)
 	, RetryDelay(1.0f)
 	, TimeSinceLastAttempt(0.0f)
 	, bHandshakeSent(false)
@@ -256,25 +257,15 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 
 	// Parse server address
 	FString Host;
-	int32 Port = 3478; // Default STUN port
-	
-	int32 ColonPos;
-	if (ServerAddress.FindChar(':', ColonPos))
+	int32 Port;
+	ParseServerAddress(ServerAddress, Host, Port, 3478);
+
+	if (!ValidateSocketSubsystem())
 	{
-		Host = ServerAddress.Left(ColonPos);
-		Port = FCString::Atoi(*ServerAddress.Mid(ColonPos + 1));
-	}
-	else
-	{
-		Host = ServerAddress;
+		return false;
 	}
 
 	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
-	if (!SocketSubsystem)
-	{
-		UE_LOG(LogOnlineICE, Error, TEXT("Failed to get socket subsystem"));
-		return false;
-	}
 
 	// Resolve STUN server address
 	TSharedPtr<FInternetAddr> STUNAddr = SocketSubsystem->GetAddressFromString(Host);
@@ -283,7 +274,6 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to resolve STUN server: %s"), *Host);
 		return false;
 	}
-
 	STUNAddr->SetPort(Port);
 
 	// Create a temporary socket for STUN request
@@ -294,32 +284,10 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 		return false;
 	}
 
-	// Build STUN Binding Request
-	// STUN message format: Type (2 bytes) | Length (2 bytes) | Magic Cookie (4 bytes) | Transaction ID (12 bytes)
+	// Build and send STUN Binding Request
 	uint8 STUNRequest[20];
-	FMemory::Memzero(STUNRequest, sizeof(STUNRequest));
+	BuildSTUNBindingRequest(STUNRequest);
 
-	// Message Type: Binding Request (0x0001)
-	STUNRequest[0] = 0x00;
-	STUNRequest[1] = 0x01;
-
-	// Message Length: 0 (no attributes for basic request)
-	STUNRequest[2] = 0x00;
-	STUNRequest[3] = 0x00;
-
-	// Magic Cookie: 0x2112A442
-	STUNRequest[4] = 0x21;
-	STUNRequest[5] = 0x12;
-	STUNRequest[6] = 0xA4;
-	STUNRequest[7] = 0x42;
-
-	// Transaction ID: Random 12 bytes
-	for (int32 i = 8; i < 20; i++)
-	{
-		STUNRequest[i] = FMath::Rand() & 0xFF;
-	}
-
-	// Send STUN request
 	int32 BytesSent;
 	if (!STUNSocket->SendTo(STUNRequest, sizeof(STUNRequest), BytesSent, *STUNAddr))
 	{
@@ -348,70 +316,20 @@ bool FICEAgent::PerformSTUNRequest(const FString& ServerAddress, FString& OutPub
 		return false;
 	}
 
-	// Parse STUN response (simplified)
-	if (BytesRead >= 20)
+	// Parse STUN response
+	bool bSuccess = ParseSTUNResponse(STUNResponse, BytesRead, OutPublicIP, OutPublicPort);
+	
+	if (bSuccess)
 	{
-		uint16 MessageType = (STUNResponse[0] << 8) | STUNResponse[1];
-		uint16 MessageLength = (STUNResponse[2] << 8) | STUNResponse[3];
-
-		// Check if it's a Binding Response (0x0101)
-		if (MessageType == 0x0101 && BytesRead >= 20 + MessageLength)
-		{
-			// Parse attributes to find XOR-MAPPED-ADDRESS (0x0020)
-			int32 Offset = 20;
-			while (Offset < BytesRead)
-			{
-				if (Offset + 4 > BytesRead) break;
-
-				uint16 AttrType = (STUNResponse[Offset] << 8) | STUNResponse[Offset + 1];
-				uint16 AttrLength = (STUNResponse[Offset + 2] << 8) | STUNResponse[Offset + 3];
-
-				if (AttrType == 0x0020 && AttrLength >= 8) // XOR-MAPPED-ADDRESS
-				{
-					// Ensure we have enough bytes to read the attribute value
-					if (Offset + 4 + AttrLength > BytesRead)
-					{
-						UE_LOG(LogOnlineICE, Warning, TEXT("Incomplete XOR-MAPPED-ADDRESS attribute"));
-						break;
-					}
-
-					// Family (1 byte at offset 5)
-					uint8 Family = STUNResponse[Offset + 5];
-
-					if (Family == 0x01) // IPv4
-					{
-						// XOR-ed Port (2 bytes at offset 6-7)
-						uint16 XorPort = (STUNResponse[Offset + 6] << 8) | STUNResponse[Offset + 7];
-						OutPublicPort = XorPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
-
-						// XOR-ed IP (4 bytes at offset 8-11)
-						uint32 XorIP = (STUNResponse[Offset + 8] << 24) | (STUNResponse[Offset + 9] << 16) |
-						              (STUNResponse[Offset + 10] << 8) | STUNResponse[Offset + 11];
-						uint32 PublicIPValue = XorIP ^ STUNConstants::MAGIC_COOKIE;
-
-						// Convert to string
-						OutPublicIP = FString::Printf(TEXT("%d.%d.%d.%d"),
-							(PublicIPValue >> 24) & 0xFF,
-							(PublicIPValue >> 16) & 0xFF,
-							(PublicIPValue >> 8) & 0xFF,
-							PublicIPValue & 0xFF);
-
-						UE_LOG(LogOnlineICE, Log, TEXT("STUN discovered public address: %s:%d"), *OutPublicIP, OutPublicPort);
-
-						SocketSubsystem->DestroySocket(STUNSocket);
-						return true;
-					}
-				}
-
-				// Move to next attribute (pad to 4-byte boundary)
-				Offset += 4 + ((AttrLength + 3) & ~3);
-			}
-		}
+		UE_LOG(LogOnlineICE, Log, TEXT("STUN discovered public address: %s:%d"), *OutPublicIP, OutPublicPort);
+	}
+	else
+	{
+		UE_LOG(LogOnlineICE, Warning, TEXT("Failed to parse STUN response"));
 	}
 
-	UE_LOG(LogOnlineICE, Warning, TEXT("Failed to parse STUN response"));
 	SocketSubsystem->DestroySocket(STUNSocket);
-	return false;
+	return bSuccess;
 }
 
 bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FString& Username, const FString& Credential, FString& OutRelayIP, int32& OutRelayPort)
@@ -907,14 +825,51 @@ void FICEAgent::UpdateConnectionState(EICEConnectionState NewState)
 
 bool FICEAgent::StartConnectivityChecks()
 {
-	UE_LOG(LogOnlineICE, Log, TEXT("Starting ICE connectivity checks"));
+	UE_LOG(LogOnlineICE, Log, TEXT("Starting ICE connectivity checks - Current state: %s"), *GetConnectionStateName(ConnectionState));
 
-	if (LocalCandidates.Num() == 0 || RemoteCandidates.Num() == 0)
+	// Validar estado previo - evitar llamadas cuando ya estamos conectados
+	if (ConnectionState == EICEConnectionState::Connected)
 	{
-		UE_LOG(LogOnlineICE, Error, TEXT("No candidates available for connectivity checks"));
+		UE_LOG(LogOnlineICE, Warning, TEXT("Already connected, ignoring StartConnectivityChecks call"));
+		return true;
+	}
+
+	// Evitar reintentos infinitos - límite total de intentos
+	if (TotalConnectionAttempts >= MAX_TOTAL_ATTEMPTS)
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Max total connection attempts (%d) reached, giving up"), MAX_TOTAL_ATTEMPTS);
 		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
+
+	// Incrementar contador total de intentos
+	TotalConnectionAttempts++;
+
+	if (LocalCandidates.Num() == 0 || RemoteCandidates.Num() == 0)
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("No candidates available for connectivity checks (Local: %d, Remote: %d)"), 
+			LocalCandidates.Num(), RemoteCandidates.Num());
+		UpdateConnectionState(EICEConnectionState::Failed);
+		return false;
+	}
+
+	// Limpiar socket existente si hay uno (evitar sockets huérfanos)
+	if (Socket)
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Cleaning up existing socket before creating new connection"));
+		ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+		if (SocketSubsystem)
+		{
+			SocketSubsystem->DestroySocket(Socket);
+		}
+		Socket = nullptr;
+	}
+
+	// Resetear estado de handshake para nuevo intento
+	bHandshakeSent = false;
+	bHandshakeReceived = false;
+	TimeSinceHandshakeStart = 0.0f;
+	TimeSinceLastHandshakeSend = 0.0f;
 
 	// Intentar primero con candidatos directos (host y server reflexive)
 	if (DirectConnectionAttempts < MAX_DIRECT_ATTEMPTS)
@@ -944,33 +899,19 @@ bool FICEAgent::StartConnectivityChecks()
 
 		if (DirectLocalCandidates.Num() > 0 && DirectRemoteCandidates.Num() > 0)
 		{
-			// Seleccionar el par de mayor prioridad
-			SelectedLocalCandidate = DirectLocalCandidates[0];
-			SelectedRemoteCandidate = DirectRemoteCandidates[0];
+			// Seleccionar candidatos de mayor prioridad
+			SelectedLocalCandidate = SelectHighestPriorityCandidate(DirectLocalCandidates);
+			SelectedRemoteCandidate = SelectHighestPriorityCandidate(DirectRemoteCandidates);
 
-			for (const FICECandidate& Cand : DirectLocalCandidates)
-			{
-				if (Cand.Priority > SelectedLocalCandidate.Priority)
-				{
-					SelectedLocalCandidate = Cand;
-				}
-			}
-
-			for (const FICECandidate& Cand : DirectRemoteCandidates)
-			{
-				if (Cand.Priority > SelectedRemoteCandidate.Priority)
-				{
-					SelectedRemoteCandidate = Cand;
-				}
-			}
-
-			UE_LOG(LogOnlineICE, Log, TEXT("Attempting direct connection (try %d/%d) - Local: %s, Remote: %s"),
+			UE_LOG(LogOnlineICE, Log, TEXT("Attempting direct connection (try %d/%d) - Local: %s (priority: %d), Remote: %s (priority: %d)"),
 				DirectConnectionAttempts, MAX_DIRECT_ATTEMPTS,
-				*SelectedLocalCandidate.ToString(), *SelectedRemoteCandidate.ToString());
+				*SelectedLocalCandidate.ToString(), SelectedLocalCandidate.Priority,
+				*SelectedRemoteCandidate.ToString(), SelectedRemoteCandidate.Priority);
 		}
 		else
 		{
-			UE_LOG(LogOnlineICE, Warning, TEXT("No direct candidates available, falling back to relay"));
+			UE_LOG(LogOnlineICE, Warning, TEXT("No direct candidates available (Local: %d, Remote: %d), falling back to relay"),
+				DirectLocalCandidates.Num(), DirectRemoteCandidates.Num());
 			UpdateConnectionState(EICEConnectionState::ConnectingRelay);
 		}
 	}
@@ -1002,15 +943,18 @@ bool FICEAgent::StartConnectivityChecks()
 
 		if (RelayLocalCandidates.Num() > 0 && RelayRemoteCandidates.Num() > 0)
 		{
-			SelectedLocalCandidate = RelayLocalCandidates[0];
-			SelectedRemoteCandidate = RelayRemoteCandidates[0];
+			// Seleccionar candidatos relay de mayor prioridad
+			SelectedLocalCandidate = SelectHighestPriorityCandidate(RelayLocalCandidates);
+			SelectedRemoteCandidate = SelectHighestPriorityCandidate(RelayRemoteCandidates);
 
-			UE_LOG(LogOnlineICE, Log, TEXT("Selected relay candidates - Local: %s, Remote: %s"),
-				*SelectedLocalCandidate.ToString(), *SelectedRemoteCandidate.ToString());
+			UE_LOG(LogOnlineICE, Log, TEXT("Selected relay candidates - Local: %s (priority: %d), Remote: %s (priority: %d)"),
+				*SelectedLocalCandidate.ToString(), SelectedLocalCandidate.Priority,
+				*SelectedRemoteCandidate.ToString(), SelectedRemoteCandidate.Priority);
 		}
 		else
 		{
-			UE_LOG(LogOnlineICE, Error, TEXT("No relay candidates available after direct connection failed"));
+			UE_LOG(LogOnlineICE, Error, TEXT("No relay candidates available after direct connection failed (Local relay: %d, Remote relay: %d)"),
+				RelayLocalCandidates.Num(), RelayRemoteCandidates.Num());
 			UpdateConnectionState(EICEConnectionState::Failed);
 			return false;
 		}
@@ -1021,6 +965,7 @@ bool FICEAgent::StartConnectivityChecks()
 	if (!SocketSubsystem)
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to get socket subsystem"));
+		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
 
@@ -1028,6 +973,7 @@ bool FICEAgent::StartConnectivityChecks()
 	if (!RemoteAddr.IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to parse remote address: %s"), *SelectedRemoteCandidate.Address);
+		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
 	RemoteAddr->SetPort(SelectedRemoteCandidate.Port);
@@ -1037,6 +983,7 @@ bool FICEAgent::StartConnectivityChecks()
 	if (!LocalAddr.IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to parse local address: %s"), *SelectedLocalCandidate.Address);
+		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
 	
@@ -1059,6 +1006,7 @@ bool FICEAgent::StartConnectivityChecks()
 	if (!Socket)
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to create ICE socket"));
+		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
 
@@ -1067,8 +1015,7 @@ bool FICEAgent::StartConnectivityChecks()
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to bind socket to local address: %s:%d"), 
 			*LocalAddr->ToString(false), LocalAddr->GetPort());
-		SocketSubsystem->DestroySocket(Socket);
-		Socket = nullptr;
+		CleanupSocketOnError();
 		return false;
 	}
 
@@ -1114,8 +1061,23 @@ bool FICEAgent::StartConnectivityChecks()
 	}
 
 	// If using TURN relay, create permission and bind channel
-	if (SelectedLocalCandidate.Type == EICECandidateType::Relayed && bTURNAllocationActive)
+	if (SelectedLocalCandidate.Type == EICECandidateType::Relayed)
 	{
+		// Validar que la asignación TURN esté activa y el socket exista
+		if (!bTURNAllocationActive)
+		{
+			UE_LOG(LogOnlineICE, Error, TEXT("Selected relay candidate but TURN allocation is not active"));
+			CleanupSocketOnError();
+			return false;
+		}
+
+		if (!TURNSocket)
+		{
+			UE_LOG(LogOnlineICE, Error, TEXT("Selected relay candidate but TURN socket is not available"));
+			CleanupSocketOnError();
+			return false;
+		}
+
 		UE_LOG(LogOnlineICE, Log, TEXT("Setting up TURN relay for communication"));
 		
 		// Create permission for remote peer
@@ -1250,64 +1212,76 @@ void FICEAgent::Tick(float DeltaTime)
 		}
 	}
 
+	// Delegate to state-specific handlers
 	switch (ConnectionState)
 	{
 		case EICEConnectionState::ConnectingDirect:
-		{
-			// Si el tiempo de espera se cumplió y no estamos conectados, reintentar
-			if (TimeSinceLastAttempt >= RetryDelay && !bIsConnected)
-			{
-				UE_LOG(LogOnlineICE, Log, TEXT("Direct connection attempt timed out, retrying..."));
-				StartConnectivityChecks();
-			}
+			TickConnectingDirect(DeltaTime);
 			break;
-		}
+			
 		case EICEConnectionState::ConnectingRelay:
-		{
-			// Si el tiempo de espera se cumplió y no estamos conectados, marcar como fallido
-			if (TimeSinceLastAttempt >= RetryDelay && !bIsConnected)
-			{
-				UE_LOG(LogOnlineICE, Error, TEXT("Relay connection attempt timed out"));
-				UpdateConnectionState(EICEConnectionState::Failed);
-			}
+			TickConnectingRelay(DeltaTime);
 			break;
-		}
+			
 		case EICEConnectionState::PerformingHandshake:
-		{
-			// Process received data for handshake
-			ProcessReceivedData();
-			
-			TimeSinceHandshakeStart += DeltaTime;
-			TimeSinceLastHandshakeSend += DeltaTime;
-			
-			// Check handshake timeout
-			if (TimeSinceHandshakeStart >= HandshakeTimeout)
-			{
-				// Use handshake flags instead of bIsConnected to avoid race conditions
-				// Fail if either part of handshake is incomplete: !sent OR !received == !(sent AND received)
-				if (!bHandshakeSent || !bHandshakeReceived)
-				{
-					UE_LOG(LogOnlineICE, Error, TEXT("Handshake timeout - no response from peer"));
-					UpdateConnectionState(EICEConnectionState::Failed);
-				}
-			}
-			// Retry handshake send every second if we haven't received a response
-			else if (ShouldRetryHandshake())
-			{
-				UE_LOG(LogOnlineICE, Log, TEXT("Retrying handshake (%.1f seconds elapsed)"), TimeSinceHandshakeStart);
-				SendHandshake();
-				TimeSinceLastHandshakeSend = 0.0f; // Reset retry timer
-			}
+			TickPerformingHandshake(DeltaTime);
 			break;
-		}
+			
 		case EICEConnectionState::Connected:
-		{
 			// Process received data in connected state (for possible future keepalives)
 			ProcessReceivedData();
 			break;
-		}
+			
 		default:
 			break;
+	}
+}
+
+void FICEAgent::TickConnectingDirect(float DeltaTime)
+{
+	// Si el tiempo de espera se cumplió y no estamos conectados, reintentar
+	if (TimeSinceLastAttempt >= RetryDelay && !bIsConnected)
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Direct connection attempt timed out, retrying..."));
+		StartConnectivityChecks();
+	}
+}
+
+void FICEAgent::TickConnectingRelay(float DeltaTime)
+{
+	// Si el tiempo de espera se cumplió y no estamos conectados, marcar como fallido
+	if (TimeSinceLastAttempt >= RetryDelay && !bIsConnected)
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Relay connection attempt timed out"));
+		UpdateConnectionState(EICEConnectionState::Failed);
+	}
+}
+
+void FICEAgent::TickPerformingHandshake(float DeltaTime)
+{
+	// Process received data for handshake
+	ProcessReceivedData();
+	
+	TimeSinceHandshakeStart += DeltaTime;
+	TimeSinceLastHandshakeSend += DeltaTime;
+	
+	// Check handshake timeout
+	if (TimeSinceHandshakeStart >= HandshakeTimeout)
+	{
+		// Use handshake flags instead of bIsConnected to avoid race conditions
+		// Fail if either part of handshake is incomplete: !sent OR !received == !(sent AND received)
+		if (!bHandshakeSent || !bHandshakeReceived)
+		{
+			UE_LOG(LogOnlineICE, Error, TEXT("Handshake timeout - no response from peer"));
+			UpdateConnectionState(EICEConnectionState::Failed);
+		}
+	}
+	// Retry handshake send every second if we haven't received a response
+	else if (ShouldRetryHandshake())
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Retrying handshake (%.1f seconds elapsed)"), TimeSinceHandshakeStart);
+		SendHandshake();
+		TimeSinceLastHandshakeSend = 0.0f; // Reset retry timer
 	}
 }
 
@@ -1319,10 +1293,8 @@ bool FICEAgent::SendHandshake()
 		return false;
 	}
 
-	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
-	if (!SocketSubsystem)
+	if (!ValidateSocketSubsystem())
 	{
-		UE_LOG(LogOnlineICE, Error, TEXT("Cannot send handshake: socket subsystem unavailable"));
 		return false;
 	}
 
@@ -1331,10 +1303,7 @@ bool FICEAgent::SendHandshake()
 	uint8 HandshakePacket[HandshakeConstants::HANDSHAKE_PACKET_SIZE];
 	
 	// Magic number "ICEH"
-	for (int32 i = 0; i < 4; i++)
-	{
-		HandshakePacket[i] = HandshakeConstants::MAGIC_NUMBER[i];
-	}
+	FMemory::Memcpy(HandshakePacket, HandshakeConstants::MAGIC_NUMBER, 4);
 	
 	// Type: HELLO request or HELLO response
 	HandshakePacket[4] = bHandshakeReceived ? 
@@ -1348,6 +1317,7 @@ bool FICEAgent::SendHandshake()
 	HandshakePacket[7] = (Timestamp >> 8) & 0xFF;
 	HandshakePacket[8] = Timestamp & 0xFF;
 
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
 	TSharedPtr<FInternetAddr> RemoteAddr = SocketSubsystem->GetAddressFromString(SelectedRemoteCandidate.Address);
 	if (!RemoteAddr.IsValid())
 	{
@@ -1361,42 +1331,29 @@ bool FICEAgent::SendHandshake()
 	
 	if (bSuccess && BytesSent == sizeof(HandshakePacket))
 	{
-		if (!bHandshakeReceived)
+		const TCHAR* PacketType = bHandshakeReceived ? TEXT("response") : TEXT("request");
+		
+		if (!bHandshakeReceived && !bHandshakeSent)
 		{
 			// Only initialize timer on first send, not on retries
-			if (!bHandshakeSent)
-			{
-				bHandshakeSent = true;
-				TimeSinceHandshakeStart = 0.0f;
-				TimeSinceLastHandshakeSend = 0.0f;
-			}
-			UE_LOG(LogOnlineICE, Log, TEXT("Handshake HELLO request sent to %s:%d"), 
-				*SelectedRemoteCandidate.Address, SelectedRemoteCandidate.Port);
+			bHandshakeSent = true;
+			TimeSinceHandshakeStart = 0.0f;
+			TimeSinceLastHandshakeSend = 0.0f;
 		}
-		else
-		{
-			UE_LOG(LogOnlineICE, Log, TEXT("Handshake HELLO response sent to %s:%d"), 
-				*SelectedRemoteCandidate.Address, SelectedRemoteCandidate.Port);
-		}
+		
+		UE_LOG(LogOnlineICE, Log, TEXT("Handshake HELLO %s sent to %s:%d"), 
+			PacketType, *SelectedRemoteCandidate.Address, SelectedRemoteCandidate.Port);
 		return true;
 	}
-	else
-	{
-		UE_LOG(LogOnlineICE, Warning, TEXT("Failed to send handshake packet: sent %d of %d bytes"), 
-			BytesSent, (int32)sizeof(HandshakePacket));
-		return false;
-	}
+	
+	UE_LOG(LogOnlineICE, Warning, TEXT("Failed to send handshake packet: sent %d of %d bytes"), 
+		BytesSent, (int32)sizeof(HandshakePacket));
+	return false;
 }
 
 bool FICEAgent::ProcessReceivedData()
 {
-	if (!Socket)
-	{
-		return false;
-	}
-
-	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
-	if (!SocketSubsystem)
+	if (!Socket || !ValidateSocketSubsystem())
 	{
 		return false;
 	}
@@ -1411,6 +1368,7 @@ bool FICEAgent::ProcessReceivedData()
 	// Buffer to receive data
 	uint8 ReceiveBuffer[HandshakeConstants::MAX_RECEIVE_BUFFER_SIZE];
 	int32 BytesRead = 0;
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
 	TSharedRef<FInternetAddr> FromAddr = SocketSubsystem->CreateInternetAddr();
 
 	if (!Socket->RecvFrom(ReceiveBuffer, sizeof(ReceiveBuffer), BytesRead, *FromAddr))
@@ -1420,52 +1378,35 @@ bool FICEAgent::ProcessReceivedData()
 
 	if (BytesRead < HandshakeConstants::HANDSHAKE_PACKET_SIZE)
 	{
-		// Packet too small to be a valid handshake
-		return false;
+		return false; // Packet too small to be a valid handshake
 	}
 
 	// Verify magic number
-	bool bIsMagicNumberValid = true;
-	for (int32 i = 0; i < 4; i++)
+	if (!VerifyHandshakeMagicNumber(ReceiveBuffer))
 	{
-		if (ReceiveBuffer[i] != HandshakeConstants::MAGIC_NUMBER[i])
-		{
-			bIsMagicNumberValid = false;
-			break;
-		}
+		return false;
 	}
 
-	if (bIsMagicNumberValid)
+	uint8 PacketType = ReceiveBuffer[4];
+	
+	if (PacketType == HandshakeConstants::PACKET_TYPE_HELLO_REQUEST)
 	{
-		uint8 PacketType = ReceiveBuffer[4];
+		UE_LOG(LogOnlineICE, Log, TEXT("Received handshake HELLO request from %s"), 
+			*FromAddr->ToString(true));
 		
-		if (PacketType == HandshakeConstants::PACKET_TYPE_HELLO_REQUEST) // HELLO request
-		{
-			UE_LOG(LogOnlineICE, Log, TEXT("Received handshake HELLO request from %s"), 
-				*FromAddr->ToString(true));
-			
-			bHandshakeReceived = true;
-			
-			// Respond with HELLO response
-			SendHandshake();
-			
-			// Check if handshake is complete
-			CompleteHandshake();
-			
-			return true;
-		}
-		else if (PacketType == HandshakeConstants::PACKET_TYPE_HELLO_RESPONSE) // HELLO response
-		{
-			UE_LOG(LogOnlineICE, Log, TEXT("Received handshake HELLO response from %s"), 
-				*FromAddr->ToString(true));
-			
-			bHandshakeReceived = true;
-			
-			// Check if handshake is complete
-			CompleteHandshake();
-			
-			return true;
-		}
+		bHandshakeReceived = true;
+		SendHandshake(); // Respond with HELLO response
+		CompleteHandshake();
+		return true;
+	}
+	else if (PacketType == HandshakeConstants::PACKET_TYPE_HELLO_RESPONSE)
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Received handshake HELLO response from %s"), 
+			*FromAddr->ToString(true));
+		
+		bHandshakeReceived = true;
+		CompleteHandshake();
+		return true;
 	}
 
 	return false;
@@ -1504,6 +1445,7 @@ void FICEAgent::Close()
 	bHandshakeReceived = false;
 	bTURNAllocationActive = false;
 	DirectConnectionAttempts = 0;
+	TotalConnectionAttempts = 0;
 	TimeSinceLastAttempt = 0.0f;
 	TimeSinceHandshakeStart = 0.0f;
 	TimeSinceLastHandshakeSend = 0.0f;
@@ -1543,6 +1485,165 @@ void FICEAgent::CompleteHandshake()
 		UpdateConnectionState(EICEConnectionState::Connected);
 		UE_LOG(LogOnlineICE, Log, TEXT("ICE connection fully established - handshake complete"));
 	}
+}
+
+void FICEAgent::CleanupSocketOnError()
+{
+	if (Socket)
+	{
+		ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+		if (SocketSubsystem)
+		{
+			SocketSubsystem->DestroySocket(Socket);
+		}
+		Socket = nullptr;
+	}
+	UpdateConnectionState(EICEConnectionState::Failed);
+}
+
+FICECandidate FICEAgent::SelectHighestPriorityCandidate(const TArray<FICECandidate>& Candidates) const
+{
+	if (Candidates.Num() == 0)
+	{
+		return FICECandidate();
+	}
+
+	const FICECandidate* BestCandidate = &Candidates[0];
+	for (int32 i = 1; i < Candidates.Num(); ++i)
+	{
+		if (Candidates[i].Priority > BestCandidate->Priority)
+		{
+			BestCandidate = &Candidates[i];
+		}
+	}
+	
+	return *BestCandidate;
+}
+
+bool FICEAgent::ValidateSocketSubsystem() const
+{
+	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+	if (!SocketSubsystem)
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Socket subsystem unavailable"));
+		return false;
+	}
+	return true;
+}
+
+bool FICEAgent::VerifyHandshakeMagicNumber(const uint8* Buffer) const
+{
+	for (int32 i = 0; i < 4; i++)
+	{
+		if (Buffer[i] != HandshakeConstants::MAGIC_NUMBER[i])
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+void FICEAgent::ParseServerAddress(const FString& ServerAddress, FString& OutHost, int32& OutPort, int32 DefaultPort) const
+{
+	int32 ColonPos;
+	if (ServerAddress.FindChar(':', ColonPos))
+	{
+		OutHost = ServerAddress.Left(ColonPos);
+		OutPort = FCString::Atoi(*ServerAddress.Mid(ColonPos + 1));
+	}
+	else
+	{
+		OutHost = ServerAddress;
+		OutPort = DefaultPort;
+	}
+}
+
+void FICEAgent::BuildSTUNBindingRequest(uint8* OutBuffer) const
+{
+	FMemory::Memzero(OutBuffer, 20);
+
+	// Message Type: Binding Request (0x0001)
+	OutBuffer[0] = 0x00;
+	OutBuffer[1] = 0x01;
+
+	// Message Length: 0 (no attributes for basic request)
+	OutBuffer[2] = 0x00;
+	OutBuffer[3] = 0x00;
+
+	// Magic Cookie: 0x2112A442
+	OutBuffer[4] = 0x21;
+	OutBuffer[5] = 0x12;
+	OutBuffer[6] = 0xA4;
+	OutBuffer[7] = 0x42;
+
+	// Transaction ID: Random 12 bytes
+	for (int32 i = 8; i < 20; i++)
+	{
+		OutBuffer[i] = FMath::Rand() & 0xFF;
+	}
+}
+
+bool FICEAgent::ParseSTUNResponse(const uint8* Response, int32 ResponseSize, FString& OutPublicIP, int32& OutPublicPort) const
+{
+	if (ResponseSize < 20)
+	{
+		return false;
+	}
+
+	uint16 MessageType = (Response[0] << 8) | Response[1];
+	uint16 MessageLength = (Response[2] << 8) | Response[3];
+
+	// Check if it's a Binding Response (0x0101)
+	if (MessageType != 0x0101 || ResponseSize < 20 + MessageLength)
+	{
+		return false;
+	}
+
+	// Parse attributes to find XOR-MAPPED-ADDRESS (0x0020)
+	int32 Offset = 20;
+	while (Offset < ResponseSize)
+	{
+		if (Offset + 4 > ResponseSize) break;
+
+		uint16 AttrType = (Response[Offset] << 8) | Response[Offset + 1];
+		uint16 AttrLength = (Response[Offset + 2] << 8) | Response[Offset + 3];
+
+		if (AttrType == 0x0020 && AttrLength >= 8) // XOR-MAPPED-ADDRESS
+		{
+			if (Offset + 4 + AttrLength > ResponseSize)
+			{
+				UE_LOG(LogOnlineICE, Warning, TEXT("Incomplete XOR-MAPPED-ADDRESS attribute"));
+				break;
+			}
+
+			uint8 Family = Response[Offset + 5];
+			if (Family == 0x01) // IPv4
+			{
+				// XOR-ed Port (2 bytes at offset 6-7)
+				uint16 XorPort = (Response[Offset + 6] << 8) | Response[Offset + 7];
+				OutPublicPort = XorPort ^ STUNConstants::MAGIC_COOKIE_HIGH;
+
+				// XOR-ed IP (4 bytes at offset 8-11)
+				uint32 XorIP = (Response[Offset + 8] << 24) | (Response[Offset + 9] << 16) |
+				              (Response[Offset + 10] << 8) | Response[Offset + 11];
+				uint32 PublicIPValue = XorIP ^ STUNConstants::MAGIC_COOKIE;
+
+				// Convert to string
+				OutPublicIP = FString::Printf(TEXT("%d.%d.%d.%d"),
+					(PublicIPValue >> 24) & 0xFF,
+					(PublicIPValue >> 16) & 0xFF,
+					(PublicIPValue >> 8) & 0xFF,
+					PublicIPValue & 0xFF);
+
+				return true;
+			}
+		}
+
+		// Move to next attribute (pad to 4-byte boundary)
+		Offset += 4 + ((AttrLength + 3) & ~3);
+	}
+
+	return false;
 }
 
 FString FICEAgent::GetConnectionStateName(EICEConnectionState State) const
