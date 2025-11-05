@@ -8,6 +8,7 @@
 #include "OnlineSubsystemICEPackage.h"
 
 class FOnlineSubsystemICE;
+enum class EICEConnectionState : uint8;
 
 /**
  * Delegate for local ICE candidates ready notification

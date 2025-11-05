@@ -18,6 +18,28 @@ IMPLEMENT_MODULE(FOnlineSubsystemICEModule, OnlineSubsystemICE);
 
 DEFINE_LOG_CATEGORY(LogOnlineICE);
 
+namespace
+{
+	/**
+	 * Helper function to find the active game world
+	 * @return Pointer to the game world, or nullptr if not found
+	 */
+	UWorld* FindGameWorld()
+	{
+		if (GEngine)
+		{
+			for (const FWorldContext& Context : GEngine->GetWorldContexts())
+			{
+				if (Context.WorldType == EWorldType::Game || Context.WorldType == EWorldType::PIE)
+				{
+					return Context.World();
+				}
+			}
+		}
+		return nullptr;
+	}
+}
+
 /**
  * Class responsible for creating instances of the ICE online subsystem
  */
@@ -152,42 +174,30 @@ void FOnlineSubsystemICEModule::StartupModule()
 												UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: ICE connection established for session '%s'!"), *SessionName);
 												
 												// Open listen server
-												if (GEngine)
+												UWorld* World = FindGameWorld();
+												if (World && GEngine)
 												{
-													UWorld* World = nullptr;
-													for (const FWorldContext& Context : GEngine->GetWorldContexts())
+													FString TravelURL;
+													if (!MapName.IsEmpty())
 													{
-														if (Context.WorldType == EWorldType::Game || Context.WorldType == EWorldType::PIE)
-														{
-															World = Context.World();
-															break;
-														}
-													}
-													
-													if (World)
-													{
-														FString TravelURL;
-														if (!MapName.IsEmpty())
-														{
-															// Use specified map
-															TravelURL = MapName;
-														}
-														else
-														{
-															// Use current map
-															TravelURL = World->GetMapName();
-														}
-														
-														// Add listen parameter
-														TravelURL += TEXT("?listen");
-														
-														UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Opening listen server with URL: %s"), *TravelURL);
-														GEngine->Browse(*World->GetWorldContext(), FURL(*TravelURL), nullptr);
+														// Use specified map
+														TravelURL = MapName;
 													}
 													else
 													{
-														UE_LOG(LogOnlineICE, Warning, TEXT("ICE.HOST: Could not find game world to open listen server"));
+														// Use current map
+														TravelURL = World->GetMapName();
 													}
+													
+													// Add listen parameter
+													TravelURL += TEXT("?listen");
+													
+													UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Opening listen server with URL: %s"), *TravelURL);
+													GEngine->Browse(*World->GetWorldContext(), FURL(*TravelURL), nullptr);
+												}
+												else
+												{
+													UE_LOG(LogOnlineICE, Warning, TEXT("ICE.HOST: Could not find game world to open listen server"));
 												}
 												
 												// Clean up connection delegate after opening listen server
@@ -347,24 +357,10 @@ void FOnlineSubsystemICEModule::StartupModule()
 															UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Connect string: %s"), *ConnectInfo);
 															
 															// Get player controller and travel to server
-															if (GEngine)
+															UWorld* World = FindGameWorld();
+															if (World)
 															{
-																UWorld* World = nullptr;
-																APlayerController* PlayerController = nullptr;
-																
-																for (const FWorldContext& Context : GEngine->GetWorldContexts())
-																{
-																	if (Context.WorldType == EWorldType::Game || Context.WorldType == EWorldType::PIE)
-																	{
-																		World = Context.World();
-																		if (World)
-																		{
-																			PlayerController = World->GetFirstPlayerController();
-																			break;
-																		}
-																	}
-																}
-																
+																APlayerController* PlayerController = World->GetFirstPlayerController();
 																if (PlayerController)
 																{
 																	UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Traveling to server..."));
@@ -374,6 +370,10 @@ void FOnlineSubsystemICEModule::StartupModule()
 																{
 																	UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: Could not find player controller to travel"));
 																}
+															}
+															else
+															{
+																UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: Could not find game world"));
 															}
 														}
 														else
