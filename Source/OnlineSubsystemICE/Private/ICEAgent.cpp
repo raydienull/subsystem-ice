@@ -1010,8 +1010,11 @@ bool FICEAgent::StartConnectivityChecks()
 	// Set socket to non-blocking mode for async operations
 	Socket->SetNonBlocking(true);
 	
-	// Enable broadcast and reuse address options
+	// Enable address reuse to allow multiple ICE agents or reconnections on the same port
+	// This is necessary for ICE as we may need to quickly rebind after connection failures
 	Socket->SetReuseAddr(true);
+	
+	// Disable receive error notifications to prevent socket from becoming invalid on ICMP errors
 	Socket->SetRecvErr(false);
 
 	// Get the actual bound port
