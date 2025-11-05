@@ -907,14 +907,49 @@ void FICEAgent::UpdateConnectionState(EICEConnectionState NewState)
 
 bool FICEAgent::StartConnectivityChecks()
 {
-	UE_LOG(LogOnlineICE, Log, TEXT("Starting ICE connectivity checks"));
+	UE_LOG(LogOnlineICE, Log, TEXT("Starting ICE connectivity checks - Current state: %s"), *GetConnectionStateName(ConnectionState));
 
-	if (LocalCandidates.Num() == 0 || RemoteCandidates.Num() == 0)
+	// Validar estado previo - evitar llamadas cuando ya estamos conectados
+	if (ConnectionState == EICEConnectionState::Connected)
 	{
-		UE_LOG(LogOnlineICE, Error, TEXT("No candidates available for connectivity checks"));
+		UE_LOG(LogOnlineICE, Warning, TEXT("Already connected, ignoring StartConnectivityChecks call"));
+		return true;
+	}
+
+	// Evitar reintentos infinitos - límite total de intentos
+	const int32 MAX_TOTAL_ATTEMPTS = 10;
+	if (DirectConnectionAttempts >= MAX_TOTAL_ATTEMPTS)
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("Max total connection attempts (%d) reached, giving up"), MAX_TOTAL_ATTEMPTS);
 		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
+
+	if (LocalCandidates.Num() == 0 || RemoteCandidates.Num() == 0)
+	{
+		UE_LOG(LogOnlineICE, Error, TEXT("No candidates available for connectivity checks (Local: %d, Remote: %d)"), 
+			LocalCandidates.Num(), RemoteCandidates.Num());
+		UpdateConnectionState(EICEConnectionState::Failed);
+		return false;
+	}
+
+	// Limpiar socket existente si hay uno (evitar sockets huérfanos)
+	if (Socket)
+	{
+		UE_LOG(LogOnlineICE, Log, TEXT("Cleaning up existing socket before creating new connection"));
+		ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+		if (SocketSubsystem)
+		{
+			SocketSubsystem->DestroySocket(Socket);
+		}
+		Socket = nullptr;
+	}
+
+	// Resetear estado de handshake para nuevo intento
+	bHandshakeSent = false;
+	bHandshakeReceived = false;
+	TimeSinceHandshakeStart = 0.0f;
+	TimeSinceLastHandshakeSend = 0.0f;
 
 	// Intentar primero con candidatos directos (host y server reflexive)
 	if (DirectConnectionAttempts < MAX_DIRECT_ATTEMPTS)
@@ -944,33 +979,35 @@ bool FICEAgent::StartConnectivityChecks()
 
 		if (DirectLocalCandidates.Num() > 0 && DirectRemoteCandidates.Num() > 0)
 		{
-			// Seleccionar el par de mayor prioridad
+			// Seleccionar el candidato local de mayor prioridad
 			SelectedLocalCandidate = DirectLocalCandidates[0];
+			for (int32 i = 1; i < DirectLocalCandidates.Num(); ++i)
+			{
+				if (DirectLocalCandidates[i].Priority > SelectedLocalCandidate.Priority)
+				{
+					SelectedLocalCandidate = DirectLocalCandidates[i];
+				}
+			}
+
+			// Seleccionar el candidato remoto de mayor prioridad
 			SelectedRemoteCandidate = DirectRemoteCandidates[0];
-
-			for (const FICECandidate& Cand : DirectLocalCandidates)
+			for (int32 i = 1; i < DirectRemoteCandidates.Num(); ++i)
 			{
-				if (Cand.Priority > SelectedLocalCandidate.Priority)
+				if (DirectRemoteCandidates[i].Priority > SelectedRemoteCandidate.Priority)
 				{
-					SelectedLocalCandidate = Cand;
+					SelectedRemoteCandidate = DirectRemoteCandidates[i];
 				}
 			}
 
-			for (const FICECandidate& Cand : DirectRemoteCandidates)
-			{
-				if (Cand.Priority > SelectedRemoteCandidate.Priority)
-				{
-					SelectedRemoteCandidate = Cand;
-				}
-			}
-
-			UE_LOG(LogOnlineICE, Log, TEXT("Attempting direct connection (try %d/%d) - Local: %s, Remote: %s"),
+			UE_LOG(LogOnlineICE, Log, TEXT("Attempting direct connection (try %d/%d) - Local: %s (priority: %d), Remote: %s (priority: %d)"),
 				DirectConnectionAttempts, MAX_DIRECT_ATTEMPTS,
-				*SelectedLocalCandidate.ToString(), *SelectedRemoteCandidate.ToString());
+				*SelectedLocalCandidate.ToString(), SelectedLocalCandidate.Priority,
+				*SelectedRemoteCandidate.ToString(), SelectedRemoteCandidate.Priority);
 		}
 		else
 		{
-			UE_LOG(LogOnlineICE, Warning, TEXT("No direct candidates available, falling back to relay"));
+			UE_LOG(LogOnlineICE, Warning, TEXT("No direct candidates available (Local: %d, Remote: %d), falling back to relay"),
+				DirectLocalCandidates.Num(), DirectRemoteCandidates.Num());
 			UpdateConnectionState(EICEConnectionState::ConnectingRelay);
 		}
 	}
@@ -1002,15 +1039,34 @@ bool FICEAgent::StartConnectivityChecks()
 
 		if (RelayLocalCandidates.Num() > 0 && RelayRemoteCandidates.Num() > 0)
 		{
+			// Seleccionar el candidato relay local de mayor prioridad
 			SelectedLocalCandidate = RelayLocalCandidates[0];
-			SelectedRemoteCandidate = RelayRemoteCandidates[0];
+			for (int32 i = 1; i < RelayLocalCandidates.Num(); ++i)
+			{
+				if (RelayLocalCandidates[i].Priority > SelectedLocalCandidate.Priority)
+				{
+					SelectedLocalCandidate = RelayLocalCandidates[i];
+				}
+			}
 
-			UE_LOG(LogOnlineICE, Log, TEXT("Selected relay candidates - Local: %s, Remote: %s"),
-				*SelectedLocalCandidate.ToString(), *SelectedRemoteCandidate.ToString());
+			// Seleccionar el candidato relay remoto de mayor prioridad
+			SelectedRemoteCandidate = RelayRemoteCandidates[0];
+			for (int32 i = 1; i < RelayRemoteCandidates.Num(); ++i)
+			{
+				if (RelayRemoteCandidates[i].Priority > SelectedRemoteCandidate.Priority)
+				{
+					SelectedRemoteCandidate = RelayRemoteCandidates[i];
+				}
+			}
+
+			UE_LOG(LogOnlineICE, Log, TEXT("Selected relay candidates - Local: %s (priority: %d), Remote: %s (priority: %d)"),
+				*SelectedLocalCandidate.ToString(), SelectedLocalCandidate.Priority,
+				*SelectedRemoteCandidate.ToString(), SelectedRemoteCandidate.Priority);
 		}
 		else
 		{
-			UE_LOG(LogOnlineICE, Error, TEXT("No relay candidates available after direct connection failed"));
+			UE_LOG(LogOnlineICE, Error, TEXT("No relay candidates available after direct connection failed (Local relay: %d, Remote relay: %d)"),
+				RelayLocalCandidates.Num(), RelayRemoteCandidates.Num());
 			UpdateConnectionState(EICEConnectionState::Failed);
 			return false;
 		}
@@ -1021,6 +1077,7 @@ bool FICEAgent::StartConnectivityChecks()
 	if (!SocketSubsystem)
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to get socket subsystem"));
+		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
 
@@ -1028,6 +1085,7 @@ bool FICEAgent::StartConnectivityChecks()
 	if (!RemoteAddr.IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to parse remote address: %s"), *SelectedRemoteCandidate.Address);
+		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
 	RemoteAddr->SetPort(SelectedRemoteCandidate.Port);
@@ -1037,6 +1095,7 @@ bool FICEAgent::StartConnectivityChecks()
 	if (!LocalAddr.IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to parse local address: %s"), *SelectedLocalCandidate.Address);
+		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
 	
@@ -1059,6 +1118,7 @@ bool FICEAgent::StartConnectivityChecks()
 	if (!Socket)
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Failed to create ICE socket"));
+		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
 
@@ -1069,6 +1129,7 @@ bool FICEAgent::StartConnectivityChecks()
 			*LocalAddr->ToString(false), LocalAddr->GetPort());
 		SocketSubsystem->DestroySocket(Socket);
 		Socket = nullptr;
+		UpdateConnectionState(EICEConnectionState::Failed);
 		return false;
 	}
 
@@ -1114,8 +1175,27 @@ bool FICEAgent::StartConnectivityChecks()
 	}
 
 	// If using TURN relay, create permission and bind channel
-	if (SelectedLocalCandidate.Type == EICECandidateType::Relayed && bTURNAllocationActive)
+	if (SelectedLocalCandidate.Type == EICECandidateType::Relayed)
 	{
+		// Validar que la asignación TURN esté activa y el socket exista
+		if (!bTURNAllocationActive)
+		{
+			UE_LOG(LogOnlineICE, Error, TEXT("Selected relay candidate but TURN allocation is not active"));
+			SocketSubsystem->DestroySocket(Socket);
+			Socket = nullptr;
+			UpdateConnectionState(EICEConnectionState::Failed);
+			return false;
+		}
+
+		if (!TURNSocket)
+		{
+			UE_LOG(LogOnlineICE, Error, TEXT("Selected relay candidate but TURN socket is not available"));
+			SocketSubsystem->DestroySocket(Socket);
+			Socket = nullptr;
+			UpdateConnectionState(EICEConnectionState::Failed);
+			return false;
+		}
+
 		UE_LOG(LogOnlineICE, Log, TEXT("Setting up TURN relay for communication"));
 		
 		// Create permission for remote peer
