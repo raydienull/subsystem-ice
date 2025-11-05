@@ -6,6 +6,24 @@ All notable changes to OnlineSubsystemICE will be documented in this file.
 
 ### Added
 
+#### Automatic Listen Server and Client Travel
+- **Real Unreal Engine Workflow**: Commands now automatically implement full multiplayer flow
+  - `ICE.HOST` automatically opens listen server when ICE connection is established
+  - `ICE.JOIN` automatically travels to server when ICE connection is established
+  - New optional map parameter for `ICE.HOST`: `ICE.HOST [sessionName] [mapName]`
+- **New Delegate**: `OnICEConnectionStateChanged` in `FOnlineSessionICE`
+  - Broadcasts when ICE connection state changes for a session
+  - Parameters: `SessionName`, `EICEConnectionState`
+  - Allows applications to react to connection establishment
+- **Code Examples**: Updated EXAMPLES.md with examples showing how to use the new delegate
+  - Host example: Automatically open listen server when ICE connects
+  - Client example: Automatically travel to server when ICE connects
+
+### Changed
+- **Host Workflow**: `ICE.HOST` now uses `World->ServerTravel()` to open listen server (standard UE method)
+- **Command Syntax**: `ICE.HOST [sessionName] [mapName]` - map parameter is now optional
+- **Better Logging**: Added detailed logs for connection establishment and server travel
+
 #### Connection Handshake Verification
 - **Bidirectional Connectivity Check**: Added handshake mechanism to verify connection establishment
   - HELLO request/response packet exchange before marking connection as established
