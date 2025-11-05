@@ -84,6 +84,11 @@ struct FICEAgentConfig
 };
 
 /**
+ * Delegate for state change notifications
+ */
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnConnectionStateChanged, EICEConnectionState);
+
+/**
  * ICE Agent implementation
  * Handles candidate gathering, connectivity checks, and connection establishment
  */
@@ -141,10 +146,8 @@ public:
 		return ConnectionState;
 	}
 
-	/**
-	 * Delegate for state change notifications
-	 */
-	DECLARE_MULTICAST_DELEGATE_OneParam(FOnConnectionStateChanged, EICEConnectionState);
+	/** Event that fires when connection state changes */
+	FOnConnectionStateChanged OnConnectionStateChanged;
 
 	/**
 	 * Bind to connection state changes
@@ -157,9 +160,6 @@ public:
 	}
 
 private:
-	/** Event that fires when connection state changes */
-	FOnConnectionStateChanged OnConnectionStateChanged;
-
 	/**
 	 * Send data through the established connection
 	 * @param Data - The data to send
