@@ -8,6 +8,7 @@
 #include "OnlineSubsystemICEPackage.h"
 
 class FOnlineSubsystemICE;
+enum class EICEConnectionState : uint8;
 
 /**
  * Delegate for local ICE candidates ready notification
@@ -117,6 +118,13 @@ public:
 	 * Applications can bind to this to monitor candidate reception
 	 */
 	FOnRemoteCandidateReceived OnRemoteCandidateReceived;
+
+	/**
+	 * Delegate called when ICE connection state changes for a session
+	 * Params: SessionName, NewState
+	 */
+	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnICEConnectionStateChanged, FName, EICEConnectionState);
+	FOnICEConnectionStateChanged OnICEConnectionStateChanged;
 
 private:
 	/** Reference to the main subsystem */

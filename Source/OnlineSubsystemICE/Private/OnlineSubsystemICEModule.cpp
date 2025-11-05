@@ -9,10 +9,36 @@
 #include "HAL/IConsoleManager.h"
 #include "OnlineSubsystem.h"
 #include "Interfaces/OnlineSessionInterface.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "ICEAgent.h"
 
 IMPLEMENT_MODULE(FOnlineSubsystemICEModule, OnlineSubsystemICE);
 
 DEFINE_LOG_CATEGORY(LogOnlineICE);
+
+namespace
+{
+	/**
+	 * Helper function to find the active game world
+	 * @return Pointer to the game world, or nullptr if not found
+	 */
+	UWorld* FindGameWorld()
+	{
+		if (GEngine)
+		{
+			for (const FWorldContext& Context : GEngine->GetWorldContexts())
+			{
+				if (Context.WorldType == EWorldType::Game || Context.WorldType == EWorldType::PIE)
+				{
+					return Context.World();
+				}
+			}
+		}
+		return nullptr;
+	}
+}
 
 /**
  * Class responsible for creating instances of the ICE online subsystem
@@ -85,10 +111,11 @@ void FOnlineSubsystemICEModule::StartupModule()
 	// ICE HOST
 	ConsoleCommands.Add(ConsoleManager.RegisterConsoleCommand(
 		TEXT("ICE.HOST"),
-		TEXT("Host a new game session. Usage: ICE.HOST [sessionName]"),
+		TEXT("Host a new game session. Usage: ICE.HOST [sessionName] [mapName]"),
 		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
 		{
 			FString SessionName = Args.Num() > 0 ? Args[0] : TEXT("GameSession");
+			FString MapName = Args.Num() > 1 ? Args[1] : TEXT("");
 			
 			IOnlineSubsystem* OnlineSubsystem = IOnlineSubsystem::Get(FName(TEXT("ICE")));
 			if (OnlineSubsystem)
@@ -114,9 +141,11 @@ void FOnlineSubsystemICEModule::StartupModule()
 					SessionSettings.bAllowInvites = true;
 					
 					// Bind to completion delegate with self-cleanup
-					// Note: Capturing SessionName by value to ensure it outlives the async callback
+					// Note: Capturing SessionName and MapName by value to ensure they outlive the async callback
 					TSharedPtr<FDelegateHandle> DelegateHandlePtr = MakeShared<FDelegateHandle>();
-					*DelegateHandlePtr = SessionInterface->OnCreateSessionCompleteDelegates.AddLambda([SessionName, DelegateHandlePtr](FName InSessionName, bool bWasSuccessful)
+					TSharedPtr<FDelegateHandle> ConnectionDelegateHandlePtr = MakeShared<FDelegateHandle>();
+					
+					*DelegateHandlePtr = SessionInterface->OnCreateSessionCompleteDelegates.AddLambda([SessionName, MapName, DelegateHandlePtr, ConnectionDelegateHandlePtr](FName InSessionName, bool bWasSuccessful)
 					{
 						if (bWasSuccessful)
 						{
@@ -133,7 +162,65 @@ void FOnlineSubsystemICEModule::StartupModule()
 								{
 									Sessions->StartSession(InSessionName);
 									
-									// Clean up delegate after use
+									// Get ICE session to bind to connection state changes
+									FOnlineSessionICE* ICESession = static_cast<FOnlineSessionICE*>(Sessions.Get());
+									if (ICESession)
+									{
+										// Bind to ICE connection state changes to open listen server when connected
+										*ConnectionDelegateHandlePtr = ICESession->OnICEConnectionStateChanged.AddLambda([SessionName, MapName, ConnectionDelegateHandlePtr](FName ChangedSessionName, EICEConnectionState NewState)
+										{
+											if (ChangedSessionName == FName(*SessionName) && NewState == EICEConnectionState::Connected)
+											{
+												UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: ICE connection established for session '%s'!"), *SessionName);
+												
+												// Open listen server
+												UWorld* World = FindGameWorld();
+												if (World)
+												{
+													FString TravelURL;
+													if (!MapName.IsEmpty())
+													{
+														// Use specified map
+														TravelURL = MapName;
+													}
+													else
+													{
+														// Use current map
+														TravelURL = World->GetMapName();
+													}
+													
+													// Add listen parameter
+													TravelURL += TEXT("?listen");
+													
+													UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Opening listen server with URL: %s"), *TravelURL);
+													World->ServerTravel(TravelURL, false);
+												}
+												else
+												{
+													UE_LOG(LogOnlineICE, Warning, TEXT("ICE.HOST: Could not find game world to open listen server"));
+												}
+												
+												// Clean up connection delegate after opening listen server
+												IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+												if (OnlineSub)
+												{
+													IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+													if (Sessions.IsValid())
+													{
+														FOnlineSessionICE* ICESession = static_cast<FOnlineSessionICE*>(Sessions.Get());
+														if (ICESession)
+														{
+															ICESession->OnICEConnectionStateChanged.Remove(*ConnectionDelegateHandlePtr);
+														}
+													}
+												}
+											}
+										});
+										
+										UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Will automatically open listen server when ICE connection is established"));
+									}
+									
+									// Clean up session creation delegate after use
 									Sessions->ClearOnCreateSessionCompleteDelegate_Handle(*DelegateHandlePtr);
 								}
 							}
@@ -161,6 +248,14 @@ void FOnlineSubsystemICEModule::StartupModule()
 					if (bStarted)
 					{
 						UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Creating session '%s'..."), *SessionName);
+						if (!MapName.IsEmpty())
+						{
+							UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Will open map '%s' as listen server when ICE connects"), *MapName);
+						}
+						else
+						{
+							UE_LOG(LogOnlineICE, Display, TEXT("ICE.HOST: Will open current map as listen server when ICE connects"));
+						}
 					}
 					else
 					{
@@ -221,7 +316,9 @@ void FOnlineSubsystemICEModule::StartupModule()
 					// Bind to completion delegate with self-cleanup
 					// Note: Capturing SessionName by value to ensure it outlives the async callback
 					TSharedPtr<FDelegateHandle> DelegateHandlePtr = MakeShared<FDelegateHandle>();
-					*DelegateHandlePtr = SessionInterface->OnJoinSessionCompleteDelegates.AddLambda([SessionName, DelegateHandlePtr](FName InSessionName, EOnJoinSessionCompleteResult::Type Result)
+					TSharedPtr<FDelegateHandle> ConnectionDelegateHandlePtr = MakeShared<FDelegateHandle>();
+					
+					*DelegateHandlePtr = SessionInterface->OnJoinSessionCompleteDelegates.AddLambda([SessionName, DelegateHandlePtr, ConnectionDelegateHandlePtr](FName InSessionName, EOnJoinSessionCompleteResult::Type Result)
 					{
 						if (Result == EOnJoinSessionCompleteResult::Success)
 						{
@@ -230,13 +327,75 @@ void FOnlineSubsystemICEModule::StartupModule()
 							UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Share candidates with remote peer using your signaling method"));
 							UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: After exchanging candidates, use ICE.STARTCHECKS to establish P2P connection"));
 							
-							// Clean up delegate after use
+							// Get ICE session to bind to connection state changes
 							IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
 							if (OnlineSub)
 							{
 								IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
 								if (Sessions.IsValid())
 								{
+									FOnlineSessionICE* ICESession = static_cast<FOnlineSessionICE*>(Sessions.Get());
+									if (ICESession)
+									{
+										// Bind to ICE connection state changes to travel to server when connected
+										*ConnectionDelegateHandlePtr = ICESession->OnICEConnectionStateChanged.AddLambda([SessionName, ConnectionDelegateHandlePtr](FName ChangedSessionName, EICEConnectionState NewState)
+										{
+											if (ChangedSessionName == FName(*SessionName) && NewState == EICEConnectionState::Connected)
+											{
+												UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: ICE connection established for session '%s'!"), *SessionName);
+												
+												// Get connect string and travel to server
+												IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get(FName(TEXT("ICE")));
+												if (OnlineSub)
+												{
+													IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+													if (Sessions.IsValid())
+													{
+														FString ConnectInfo;
+														if (Sessions->GetResolvedConnectString(ChangedSessionName, ConnectInfo))
+														{
+															UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Connect string: %s"), *ConnectInfo);
+															
+															// Get player controller and travel to server
+															UWorld* World = FindGameWorld();
+															if (World)
+															{
+																APlayerController* PlayerController = World->GetFirstPlayerController();
+																if (PlayerController)
+																{
+																	UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Traveling to server..."));
+																	PlayerController->ClientTravel(ConnectInfo, TRAVEL_Absolute);
+																}
+																else
+																{
+																	UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: Could not find player controller to travel"));
+																}
+															}
+															else
+															{
+																UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: Could not find game world"));
+															}
+														}
+														else
+														{
+															UE_LOG(LogOnlineICE, Warning, TEXT("ICE.JOIN: Could not get connect string for session"));
+														}
+														
+														// Clean up connection delegate after traveling
+														FOnlineSessionICE* ICESession = static_cast<FOnlineSessionICE*>(Sessions.Get());
+														if (ICESession)
+														{
+															ICESession->OnICEConnectionStateChanged.Remove(*ConnectionDelegateHandlePtr);
+														}
+													}
+												}
+											}
+										});
+										
+										UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Will automatically travel to server when ICE connection is established"));
+									}
+									
+									// Clean up session join delegate after use
 									Sessions->ClearOnJoinSessionCompleteDelegate_Handle(*DelegateHandlePtr);
 								}
 							}
@@ -264,6 +423,7 @@ void FOnlineSubsystemICEModule::StartupModule()
 					if (bStarted)
 					{
 						UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Joining session '%s'..."), *SessionName);
+						UE_LOG(LogOnlineICE, Display, TEXT("ICE.JOIN: Will automatically travel to server when ICE connects"));
 					}
 					else
 					{
