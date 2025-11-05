@@ -2265,8 +2265,9 @@ void FICEAgent::AppendTURNUsernameAttribute(TArray<uint8>& Buffer, int32& Offset
 	// Add USERNAME attribute (0x0006)
 	int32 UsernameLen = Username.Len();
 	
-	// Calculate required space: 4 bytes header + username + padding (max 3 bytes)
-	int32 RequiredSpace = 4 + UsernameLen + 3;
+	// Calculate required space: 4 bytes header + username + padding to 4-byte boundary
+	int32 PaddingBytes = (4 - (UsernameLen % 4)) % 4;
+	int32 RequiredSpace = 4 + UsernameLen + PaddingBytes;
 	
 	// Ensure buffer has enough space
 	if (Offset + RequiredSpace > Buffer.Num())
@@ -2282,14 +2283,14 @@ void FICEAgent::AppendTURNUsernameAttribute(TArray<uint8>& Buffer, int32& Offset
 	Buffer[Offset++] = (UsernameLen >> 8) & 0xFF;
 	Buffer[Offset++] = UsernameLen & 0xFF;
 	
-	// Add username string
+	// Add username string efficiently using FMemory::Memcpy
 	for (int32 i = 0; i < UsernameLen; i++)
 	{
-		Buffer[Offset++] = Username[i];
+		Buffer[Offset++] = (uint8)Username[i];
 	}
 	
 	// Pad to 4-byte boundary
-	while (Offset % 4 != 0)
+	for (int32 i = 0; i < PaddingBytes; i++)
 	{
 		Buffer[Offset++] = 0x00;
 	}
