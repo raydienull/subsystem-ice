@@ -871,23 +871,23 @@ bool FICEAgent::StartConnectivityChecks()
 	TimeSinceHandshakeStart = 0.0f;
 	TimeSinceLastHandshakeSend = 0.0f;
 
-	// Seleccionar candidatos según la estrategia (directo o relay)
+	// Select candidates based on strategy (direct or relay)
 	bool bUsingRelay = false;
 	
-	// Intentar primero con candidatos directos (host y server reflexive)
+	// Try direct candidates first (host and server reflexive)
 	if (DirectConnectionAttempts < MAX_DIRECT_ATTEMPTS)
 	{
 		DirectConnectionAttempts++;
 
-		// Filtrar candidatos directos (host y server reflexive)
-		// Nota: Combinamos ambos tipos para simplificar, ya que ambos son conexiones directas
+		// Filter direct candidates (host and server reflexive)
+		// Note: Combine both types for simplicity, as both are direct connections
 		TArray<FICECandidate> DirectLocalCandidates = FilterCandidatesByType(LocalCandidates, EICECandidateType::Host);
 		DirectLocalCandidates.Append(FilterCandidatesByType(LocalCandidates, EICECandidateType::ServerReflexive));
 		
 		TArray<FICECandidate> DirectRemoteCandidates = FilterCandidatesByType(RemoteCandidates, EICECandidateType::Host);
 		DirectRemoteCandidates.Append(FilterCandidatesByType(RemoteCandidates, EICECandidateType::ServerReflexive));
 
-		// Si hay candidatos directos disponibles, seleccionarlos
+		// If direct candidates are available, select them
 		if (DirectLocalCandidates.Num() > 0 && DirectRemoteCandidates.Num() > 0)
 		{
 			SelectedLocalCandidate = SelectHighestPriorityCandidate(DirectLocalCandidates);
@@ -903,27 +903,27 @@ bool FICEAgent::StartConnectivityChecks()
 		{
 			UE_LOG(LogOnlineICE, Warning, TEXT("No direct candidates available (Local: %d, Remote: %d), skipping to relay"),
 				DirectLocalCandidates.Num(), DirectRemoteCandidates.Num());
-			// Marcar para usar relay inmediatamente
+			// Mark for immediate relay usage
 			DirectConnectionAttempts = MAX_DIRECT_ATTEMPTS;
 			bUsingRelay = true;
 		}
 	}
 	else
 	{
-		// Los intentos directos se agotaron, usar relay
+		// Direct connection attempts exhausted, use relay
 		bUsingRelay = true;
 	}
 
-	// Si necesitamos usar relay, seleccionar candidatos relay
+	// If we need to use relay, select relay candidates
 	if (bUsingRelay)
 	{
 		UE_LOG(LogOnlineICE, Log, TEXT("Direct connection attempts exhausted or unavailable, trying relay candidates"));
 
-		// Filtrar candidatos relay usando el helper
+		// Filter relay candidates using the helper
 		TArray<FICECandidate> RelayLocalCandidates = FilterCandidatesByType(LocalCandidates, EICECandidateType::Relayed);
 		TArray<FICECandidate> RelayRemoteCandidates = FilterCandidatesByType(RemoteCandidates, EICECandidateType::Relayed);
 
-		// Verificar si hay candidatos relay disponibles
+		// Check if relay candidates are available
 		if (RelayLocalCandidates.Num() > 0 && RelayRemoteCandidates.Num() > 0)
 		{
 			SelectedLocalCandidate = SelectHighestPriorityCandidate(RelayLocalCandidates);
@@ -943,7 +943,7 @@ bool FICEAgent::StartConnectivityChecks()
 		}
 	}
 
-	// Validar que tenemos candidatos seleccionados válidos antes de continuar
+	// Validate that we have valid selected candidates before continuing
 	if (!SelectedLocalCandidate.IsValid() || !SelectedRemoteCandidate.IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Selected candidates are invalid - Local: %s, Remote: %s"),
@@ -1290,7 +1290,7 @@ bool FICEAgent::SendHandshake()
 		return false;
 	}
 
-	// Validar que tenemos un candidato remoto válido
+	// Validate that we have a valid remote candidate
 	if (!SelectedRemoteCandidate.IsValid())
 	{
 		UE_LOG(LogOnlineICE, Error, TEXT("Cannot send handshake: selected remote candidate is invalid"));
