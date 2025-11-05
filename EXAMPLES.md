@@ -14,16 +14,16 @@ Esta guía proporciona ejemplos prácticos y completos para usar OnlineSubsystem
 
 ## Testing Rápido con Comandos de Consola
 
-**⭐ NUEVO**: Comandos simplificados `ICE.HOST` e `ICE.JOIN` para probar P2P rápidamente!
+**⭐ NUEVO**: Comandos mejorados `ICE.HOST` e `ICE.JOIN` con **flujo automático de Unreal Engine**!
 
-### Escenario: Dos Instancias del Juego
+### Escenario: Dos Instancias del Juego (Flujo Automático)
 
-Esta es la forma más rápida de probar conectividad P2P entre dos instancias del juego.
+Esta es la forma más rápida de probar conectividad P2P entre dos instancias del juego. **Los comandos ahora automáticamente abren un listen server y conectan el cliente tras establecer la conexión ICE.**
 
 **Instancia A (Host):**
 ```
-# Crear sesión de host
-ICE.HOST MiPartida
+# Crear sesión de host (opcionalmente especifica un mapa)
+ICE.HOST MiPartida /Game/Maps/MyMap
 
 # Ver candidatos ICE locales
 ICE.LISTCANDIDATES
@@ -46,21 +46,25 @@ ICE.ADDCANDIDATE candidate:1 1 UDP 2130706431 192.168.1.100 5000 typ host
 # Iniciar checks de conectividad
 ICE.STARTCHECKS
 
+# ✨ AUTOMÁTICO: Cuando la conexión ICE se establece:
+#   - Host: Abre el mapa como listen server
+#   - Cliente: Viaja automáticamente al servidor
+
 # Verificar estado de conexión
 ICE.STATUS
 ```
 
 ### ¿Qué hacen estos comandos?
 
-- **`ICE.HOST [nombreSesión]`**: Crea una sesión de host con configuración por defecto (4 jugadores, anuncio público, permite join en progreso). Si no se especifica nombre, usa "GameSession".
+- **`ICE.HOST [nombreSesión] [mapName]`**: Crea una sesión de host con configuración por defecto (4 jugadores, anuncio público, permite join en progreso). **Cuando la conexión ICE se establece, automáticamente abre el mapa especificado (o el actual) como listen server usando `?listen`**. Si no se especifica nombre, usa "GameSession".
 
-- **`ICE.JOIN <nombreSesión>`**: Se une a una sesión existente. El nombre debe coincidir con el usado en `ICE.HOST`.
+- **`ICE.JOIN <nombreSesión>`**: Se une a una sesión existente. **Cuando la conexión ICE se establece, automáticamente viaja al servidor del host usando `ClientTravel`**. El nombre debe coincidir con el usado en `ICE.HOST`.
 
 - **`ICE.LISTCANDIDATES`**: Muestra los candidatos ICE locales (direcciones IP/puerto que pueden usar para conectar).
 
 - **`ICE.ADDCANDIDATE <candidato>`**: Agrega un candidato ICE remoto (copiado de la otra instancia).
 
-- **`ICE.STARTCHECKS`**: Inicia los checks de conectividad ICE para establecer la conexión P2P.
+- **`ICE.STARTCHECKS`**: Inicia los checks de conectividad ICE para establecer la conexión P2P. Una vez conectado, el host abre el listen server y el cliente viaja automáticamente.
 
 - **`ICE.STATUS`**: Muestra el estado actual de la conexión ICE.
 
@@ -70,6 +74,9 @@ ICE.STATUS
 ✅ Perfecto para testing rápido  
 ✅ Útil para debugging de problemas de red  
 ✅ Configuración por defecto optimizada  
+✅ **Flujo real de Unreal Engine**: Listen server automático para el host  
+✅ **ClientTravel automático**: El cliente se conecta automáticamente al servidor  
+✅ **Todo basado en la conexión ICE**: Se activa cuando la conexión P2P está confirmada  
 
 ### Limitaciones
 
@@ -77,6 +84,14 @@ ICE.STATUS
 ⚠️ Para producción, implementa tu propio sistema de señalización  
 
 Ver [TESTING_GUIDE.md](TESTING_GUIDE.md) para más detalles.
+
+## Flujo Automático con Comandos de Consola vs. Código Manual
+
+Los comandos `ICE.HOST` e `ICE.JOIN` ahora incluyen **automatización del flujo de Unreal Engine**:
+- **Host**: Automáticamente abre listen server cuando ICE conecta
+- **Cliente**: Automáticamente viaja al servidor cuando ICE conecta
+
+Los ejemplos de código C++ a continuación muestran cómo implementar este flujo **manualmente** en tu juego. Si usas los comandos de consola, el flujo es automático.
 
 ## Configuración Inicial
 
@@ -124,6 +139,7 @@ PublicDependencyModuleNames.AddRange(new string[]
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "Interfaces/OnlineSessionInterface.h"
+#include "ICEAgent.h"  // ⭐ NUEVO: Para EICEConnectionState
 #include "MyGameMode.generated.h"
 
 UCLASS()
@@ -138,6 +154,9 @@ public:
 private:
     void OnCreateSessionComplete(FName SessionName, bool bWasSuccessful);
     void OnStartSessionComplete(FName SessionName, bool bWasSuccessful);
+    
+    // ⭐ NUEVO: Handler para cambio de estado de conexión ICE
+    void OnICEConnectionStateChanged(FName SessionName, EICEConnectionState NewState);
 };
 ```
 
@@ -234,10 +253,42 @@ void AMyGameMode::OnStartSessionComplete(FName SessionName, bool bWasSuccessful)
         
         // La sesión está lista, los jugadores pueden unirse
         // Los candidatos ICE se han difundido automáticamente
+        
+        // ⭐ NUEVO: Bind al delegado de conexión ICE para abrir listen server automáticamente
+        IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get();
+        if (OnlineSub)
+        {
+            IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
+            if (Sessions.IsValid())
+            {
+                FOnlineSessionICE* ICESession = static_cast<FOnlineSessionICE*>(Sessions.Get());
+                if (ICESession)
+                {
+                    ICESession->OnICEConnectionStateChanged.AddUObject(this, &AMyGameMode::OnICEConnectionStateChanged);
+                }
+            }
+        }
     }
     else
     {
         UE_LOG(LogTemp, Error, TEXT("Failed to start session"));
+    }
+}
+
+// ⭐ NUEVO: Handler para cambio de estado de conexión ICE
+void AMyGameMode::OnICEConnectionStateChanged(FName SessionName, EICEConnectionState NewState)
+{
+    if (NewState == EICEConnectionState::Connected)
+    {
+        UE_LOG(LogTemp, Log, TEXT("ICE connection established! Opening listen server..."));
+        
+        // Abrir listen server con el mapa actual
+        if (GetWorld())
+        {
+            FString MapName = GetWorld()->GetMapName();
+            FString TravelURL = MapName + TEXT("?listen");
+            GetWorld()->ServerTravel(TravelURL, false);
+        }
     }
 }
 ```
@@ -356,20 +407,42 @@ void AMyGameMode::OnJoinSessionComplete(FName SessionName, EOnJoinSessionComplet
     {
         UE_LOG(LogTemp, Log, TEXT("Successfully joined session: %s"), *SessionName.ToString());
         
-        // Obtener información de conexión
+        // ⭐ NUEVO: Bind al delegado de conexión ICE para viajar automáticamente al servidor
         IOnlineSubsystem* OnlineSub = IOnlineSubsystem::Get();
         if (OnlineSub)
         {
             IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
             if (Sessions.IsValid())
             {
-                FString ConnectInfo;
-                if (Sessions->GetResolvedConnectString(SessionName, ConnectInfo))
+                FOnlineSessionICE* ICESession = static_cast<FOnlineSessionICE*>(Sessions.Get());
+                if (ICESession)
                 {
-                    UE_LOG(LogTemp, Log, TEXT("Connect string: %s"), *ConnectInfo);
-                    
-                    // Viajar al servidor (cuando el connection string esté listo)
-                    // GetWorld()->GetFirstPlayerController()->ClientTravel(ConnectInfo, TRAVEL_Absolute);
+                    // Capturar SessionName para el delegado
+                    ICESession->OnICEConnectionStateChanged.AddLambda([this, SessionName](FName ChangedSessionName, EICEConnectionState NewState)
+                    {
+                        if (ChangedSessionName == SessionName && NewState == EICEConnectionState::Connected)
+                        {
+                            UE_LOG(LogTemp, Log, TEXT("ICE connection established! Traveling to server..."));
+                            
+                            // Obtener connect string y viajar
+                            IOnlineSubsystem* OnlineSubsystem = IOnlineSubsystem::Get();
+                            if (OnlineSubsystem)
+                            {
+                                IOnlineSessionPtr SessionInterface = OnlineSubsystem->GetSessionInterface();
+                                if (SessionInterface.IsValid())
+                                {
+                                    FString ConnectInfo;
+                                    if (SessionInterface->GetResolvedConnectString(SessionName, ConnectInfo))
+                                    {
+                                        if (GetWorld() && GetWorld()->GetFirstPlayerController())
+                                        {
+                                            GetWorld()->GetFirstPlayerController()->ClientTravel(ConnectInfo, TRAVEL_Absolute);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
                 }
             }
         }
