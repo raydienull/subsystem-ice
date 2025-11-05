@@ -879,25 +879,13 @@ bool FICEAgent::StartConnectivityChecks()
 	{
 		DirectConnectionAttempts++;
 
-		// Filtrar candidatos directos
-		TArray<FICECandidate> DirectLocalCandidates;
-		TArray<FICECandidate> DirectRemoteCandidates;
-
-		for (const FICECandidate& Cand : LocalCandidates)
-		{
-			if (Cand.Type == EICECandidateType::Host || Cand.Type == EICECandidateType::ServerReflexive)
-			{
-				DirectLocalCandidates.Add(Cand);
-			}
-		}
-
-		for (const FICECandidate& Cand : RemoteCandidates)
-		{
-			if (Cand.Type == EICECandidateType::Host || Cand.Type == EICECandidateType::ServerReflexive)
-			{
-				DirectRemoteCandidates.Add(Cand);
-			}
-		}
+		// Filtrar candidatos directos (host y server reflexive)
+		// Nota: Combinamos ambos tipos para simplificar, ya que ambos son conexiones directas
+		TArray<FICECandidate> DirectLocalCandidates = FilterCandidatesByType(LocalCandidates, EICECandidateType::Host);
+		DirectLocalCandidates.Append(FilterCandidatesByType(LocalCandidates, EICECandidateType::ServerReflexive));
+		
+		TArray<FICECandidate> DirectRemoteCandidates = FilterCandidatesByType(RemoteCandidates, EICECandidateType::Host);
+		DirectRemoteCandidates.Append(FilterCandidatesByType(RemoteCandidates, EICECandidateType::ServerReflexive));
 
 		// Si hay candidatos directos disponibles, seleccionarlos
 		if (DirectLocalCandidates.Num() > 0 && DirectRemoteCandidates.Num() > 0)
@@ -931,25 +919,9 @@ bool FICEAgent::StartConnectivityChecks()
 	{
 		UE_LOG(LogOnlineICE, Log, TEXT("Direct connection attempts exhausted or unavailable, trying relay candidates"));
 
-		// Filtrar candidatos relay
-		TArray<FICECandidate> RelayLocalCandidates;
-		TArray<FICECandidate> RelayRemoteCandidates;
-
-		for (const FICECandidate& Cand : LocalCandidates)
-		{
-			if (Cand.Type == EICECandidateType::Relayed)
-			{
-				RelayLocalCandidates.Add(Cand);
-			}
-		}
-
-		for (const FICECandidate& Cand : RemoteCandidates)
-		{
-			if (Cand.Type == EICECandidateType::Relayed)
-			{
-				RelayRemoteCandidates.Add(Cand);
-			}
-		}
+		// Filtrar candidatos relay usando el helper
+		TArray<FICECandidate> RelayLocalCandidates = FilterCandidatesByType(LocalCandidates, EICECandidateType::Relayed);
+		TArray<FICECandidate> RelayRemoteCandidates = FilterCandidatesByType(RemoteCandidates, EICECandidateType::Relayed);
 
 		// Verificar si hay candidatos relay disponibles
 		if (RelayLocalCandidates.Num() > 0 && RelayRemoteCandidates.Num() > 0)
@@ -1832,20 +1804,8 @@ bool FICEAgent::PerformTURNCreatePermission(const FString& PeerAddress, int32 Pe
 	Request[Offset++] = (XorIP >> 8) & 0xFF;
 	Request[Offset++] = XorIP & 0xFF;
 
-	// Add USERNAME attribute (required for authenticated requests)
-	int32 UsernameLen = Config.TURNUsername.Len();
-	Request[Offset++] = 0x00;
-	Request[Offset++] = 0x06;
-	Request[Offset++] = (UsernameLen >> 8) & 0xFF;
-	Request[Offset++] = UsernameLen & 0xFF;
-	for (int32 i = 0; i < UsernameLen; i++)
-	{
-		Request[Offset++] = Config.TURNUsername[i];
-	}
-	while (Offset % 4 != 0)
-	{
-		Request[Offset++] = 0x00;
-	}
+	// Add USERNAME attribute using helper
+	AppendTURNUsernameAttribute(Request, Offset, Config.TURNUsername);
 
 	// Set message length
 	int32 MessageLength = Offset - 20;
@@ -1987,20 +1947,8 @@ bool FICEAgent::PerformTURNChannelBind(const FString& PeerAddress, int32 PeerPor
 	Request[Offset++] = (XorIP >> 8) & 0xFF;
 	Request[Offset++] = XorIP & 0xFF;
 
-	// Add USERNAME attribute
-	int32 UsernameLen = Config.TURNUsername.Len();
-	Request[Offset++] = 0x00;
-	Request[Offset++] = 0x06;
-	Request[Offset++] = (UsernameLen >> 8) & 0xFF;
-	Request[Offset++] = UsernameLen & 0xFF;
-	for (int32 i = 0; i < UsernameLen; i++)
-	{
-		Request[Offset++] = Config.TURNUsername[i];
-	}
-	while (Offset % 4 != 0)
-	{
-		Request[Offset++] = 0x00;
-	}
+	// Add USERNAME attribute using helper
+	AppendTURNUsernameAttribute(Request, Offset, Config.TURNUsername);
 
 	// Set message length
 	int32 MessageLength = Offset - 20;
@@ -2105,20 +2053,8 @@ bool FICEAgent::PerformTURNRefresh()
 	Request[Offset++] = (TURNAllocationLifetime >> 8) & 0xFF;
 	Request[Offset++] = TURNAllocationLifetime & 0xFF;
 
-	// Add USERNAME attribute
-	int32 UsernameLen = Config.TURNUsername.Len();
-	Request[Offset++] = 0x00;
-	Request[Offset++] = 0x06;
-	Request[Offset++] = (UsernameLen >> 8) & 0xFF;
-	Request[Offset++] = UsernameLen & 0xFF;
-	for (int32 i = 0; i < UsernameLen; i++)
-	{
-		Request[Offset++] = Config.TURNUsername[i];
-	}
-	while (Offset % 4 != 0)
-	{
-		Request[Offset++] = 0x00;
-	}
+	// Add USERNAME attribute using helper
+	AppendTURNUsernameAttribute(Request, Offset, Config.TURNUsername);
 
 	// Set message length
 	int32 MessageLength = Offset - 20;
@@ -2324,4 +2260,39 @@ bool FICEAgent::ReceiveDataFromTURN(uint8* Data, int32 MaxSize, int32& OutSize)
 
 	OutSize = 0;
 	return false;
+}
+
+void FICEAgent::AppendTURNUsernameAttribute(TArray<uint8>& Buffer, int32& Offset, const FString& Username)
+{
+	// Add USERNAME attribute (0x0006)
+	int32 UsernameLen = Username.Len();
+	Buffer[Offset++] = 0x00;
+	Buffer[Offset++] = 0x06;
+	Buffer[Offset++] = (UsernameLen >> 8) & 0xFF;
+	Buffer[Offset++] = UsernameLen & 0xFF;
+	
+	// Add username string
+	for (int32 i = 0; i < UsernameLen; i++)
+	{
+		Buffer[Offset++] = Username[i];
+	}
+	
+	// Pad to 4-byte boundary
+	while (Offset % 4 != 0)
+	{
+		Buffer[Offset++] = 0x00;
+	}
+}
+
+TArray<FICECandidate> FICEAgent::FilterCandidatesByType(const TArray<FICECandidate>& Candidates, EICECandidateType Type) const
+{
+	TArray<FICECandidate> Filtered;
+	for (const FICECandidate& Candidate : Candidates)
+	{
+		if (Candidate.Type == Type)
+		{
+			Filtered.Add(Candidate);
+		}
+	}
+	return Filtered;
 }

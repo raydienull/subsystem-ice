@@ -421,4 +421,20 @@ private:
 
 	/** Helper function to calculate HMAC-SHA1 for MESSAGE-INTEGRITY */
 	void CalculateHMACSHA1(const uint8* Data, int32 DataLen, const uint8* Key, int32 KeyLen, uint8* OutHash);
+
+	/**
+	 * Helper function to append USERNAME attribute to TURN request buffer
+	 * @param Buffer - Buffer to write to
+	 * @param Offset - Current offset in buffer, will be updated
+	 * @param Username - Username to add
+	 */
+	void AppendTURNUsernameAttribute(TArray<uint8>& Buffer, int32& Offset, const FString& Username);
+
+	/**
+	 * Helper function to filter candidates by type
+	 * @param Candidates - Source array of candidates
+	 * @param Type - Type of candidate to filter for
+	 * @return Filtered array of candidates matching the type
+	 */
+	TArray<FICECandidate> FilterCandidatesByType(const TArray<FICECandidate>& Candidates, EICECandidateType Type) const;
 };
