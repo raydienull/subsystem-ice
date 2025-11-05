@@ -385,7 +385,7 @@ private:
 	bool PerformTURNAllocation(const FString& ServerAddress, const FString& Username, const FString& Credential, FString& OutRelayIP, int32& OutRelayPort);
 
 	/** Perform TURN allocation request with optional authentication */
-	bool PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedPtr<FInternetAddr>& TURNAddr, 
+	bool PerformTURNAllocationRequest(const TSharedPtr<FInternetAddr>& TURNAddr, 
 		const FString& Username, const FString& Credential, const FString& Realm, const FString& Nonce,
 		FString& OutRelayIP, int32& OutRelayPort, bool bIsRetry = false);
 

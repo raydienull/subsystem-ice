@@ -420,7 +420,7 @@ bool FICEAgent::PerformTURNAllocation(const FString& ServerAddress, const FStrin
 	return bSuccess;
 }
 
-bool FICEAgent::PerformTURNAllocationRequest(FSocket* TURNSocket, const TSharedPtr<FInternetAddr>& TURNAddr, 
+bool FICEAgent::PerformTURNAllocationRequest(const TSharedPtr<FInternetAddr>& TURNAddr, 
 	const FString& Username, const FString& Credential, const FString& Realm, const FString& Nonce,
 	FString& OutRelayIP, int32& OutRelayPort, bool bIsRetry)
 {
