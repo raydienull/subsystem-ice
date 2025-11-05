@@ -58,7 +58,6 @@ namespace
 	/**
 	 * Helper function to get the ICE session interface
 	 * @return Pointer to the ICE session interface, or nullptr if not available
-	 * @note Uses static_cast assuming ICE subsystem is correctly initialized with FOnlineSessionICE
 	 */
 	FOnlineSessionICE* GetICESessionInterface()
 	{
@@ -68,8 +67,10 @@ namespace
 			IOnlineSessionPtr Sessions = OnlineSub->GetSessionInterface();
 			if (Sessions.IsValid())
 			{
-				// Safe cast: ICE subsystem always creates FOnlineSessionICE instances
-				return static_cast<FOnlineSessionICE*>(Sessions.Get());
+				// Safe cast: ICE subsystem always creates FOnlineSessionICE instances in FOnlineSubsystemICE::Init()
+				FOnlineSessionICE* ICESession = static_cast<FOnlineSessionICE*>(Sessions.Get());
+				check(ICESession); // Verify assumption in development builds
+				return ICESession;
 			}
 		}
 		return nullptr;
