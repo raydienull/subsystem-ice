@@ -236,7 +236,19 @@ TURNCredential=mypassword
 
 ## Recent Updates
 
-### Version 2.1 Features (Current)
+### Version 2.2 Features (Current) 🆕
+
+- ✅ **Complete TURN Implementation**: Full RFC 5766 compliance
+  - **Allocation Refresh**: Automatic TURN allocation refresh before expiration
+  - **CreatePermission**: Creates TURN permissions for peer communication
+  - **ChannelBind**: Efficient data transfer through channel binding
+  - **ChannelData**: Optimized packet format for relayed data
+  - **Persistent Socket**: TURN socket remains open for lifetime management
+- ✅ **Automatic Relay Management**: Seamless switching between direct and relayed connections
+- ✅ **Keepalive Mechanism**: Maintains TURN allocations and NAT bindings
+- ✅ **Smart Fallback**: Direct connection attempts with automatic TURN relay fallback
+
+### Version 2.1 Features
 
 - ✅ **Automatic Signaling**: File-based signaling for local testing
 - ✅ **Automatic Candidate Exchange**: No manual commands needed
@@ -259,10 +271,11 @@ See [IMPLEMENTATION.md](IMPLEMENTATION.md) and [LOCAL_TESTING_GUIDE.md](LOCAL_TE
 ## Limitations & Future Work
 
 - ✅ **Local Signaling**: File-based signaling now available for local/LAN testing
+- ✅ **TURN Relay**: Complete RFC 5766 implementation with allocation management
 - ⚠️ **Production Signaling**: HTTP/WebSocket signaling server needed for production deployment
-- ⚠️ **TURN**: Basic TURN implementation - full RFC 5766 compliance is in progress
 - ⚠️ **Security**: Consider implementing DTLS for encrypted P2P communication
 - ⚠️ **Advanced Matchmaking**: Skill-based and region-based matchmaking requires dedicated signaling server
+- ⚠️ **Send Indication**: TURN Send indication as fallback (currently uses ChannelData)
 
 ## Debugging
 
